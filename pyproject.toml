@@ -1,9 +1,6 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
-
-[tool.flit.module]
-name = "project_4_build_agent"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "project_4_build_agent"
@@ -19,6 +16,7 @@ classifiers = [
     
 ]
 dependencies = [
+    "openai>=2.30.0",
     "pip",
     "python-dotenv",
     "ruff",
@@ -26,9 +24,11 @@ dependencies = [
 ]
 requires-python = ">=3.10.0"
 
+[tool.setuptools.packages]
+find = {where = ["src"]}
 
 [tool.ruff]
-line-length = 99
+line-length = 88
 src = ["src"]
 include = ["pyproject.toml", "src/**/*.py"]
 
