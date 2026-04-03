@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv",
     "ruff",
     "sqlalchemy",
+    "sqlglot>=30.2.1",
 ]
 requires-python = ">=3.10.0"
 
