@@ -29,11 +29,14 @@ find = {where = ["src"]}
 
 [tool.ruff]
 line-length = 88
-src = ["src"]
-include = ["pyproject.toml", "src/**/*.py"]
+# Убираем строгое ограничение include, чтобы Ruff видел все файлы в проекте
+# Если хочешь оставить ограничения, добавь туда корень и ipynb
+include = ["*.py", "src/**/*.py", "**/*.ipynb", "pyproject.toml"]
 
 [tool.ruff.lint]
-extend-select = ["I"]  # Add import sorting
+# "E", "F" - базовые ошибки, "I" - сортировка импортов
+select = ["E", "F", "I"] 
+extend-select = ["W", "UP"] # Предупреждения и апгрейд синтаксиса
 
 [tool.ruff.lint.isort]
 known-first-party = ["project_4_build_agent"]
