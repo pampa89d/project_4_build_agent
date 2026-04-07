@@ -10,7 +10,7 @@ if not openrouter_api_key:
     raise ValueError("OPEN_ROUTE_API_KEY environment variable not set.")
 
 
-def query_llm(messages: list[dict]) -> str:
+def query_llm(messages: list[dict], model_name: str) -> str:
     """
     Queries the LLM with the provided messages and returns the response.
 
@@ -21,6 +21,7 @@ def query_llm(messages: list[dict]) -> str:
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "What is the capital of France?"}
             ]
+        model_name (str): The name of the LLM model to use.
 
     Returns:
         str: The response from the LLM.
@@ -34,14 +35,14 @@ def query_llm(messages: list[dict]) -> str:
         raise ValueError("LLM messages cannot be empty")
 
     completion = client.chat.completions.create(
-        model="meta-llama/llama-3.3-70b-instruct",
+        model=model_name,
         messages=messages,
     )
 
     return completion.choices[0].message.content
 
 
-def raw_query_llm(messages: list[dict]) -> str:
+def raw_query_llm(messages: list[dict], model_name: str) -> str:
     """
     Queries the LLM with the provided messages and returns the raw response without any processing.
 
@@ -52,6 +53,7 @@ def raw_query_llm(messages: list[dict]) -> str:
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "What is the capital of France?"}
             ]
+        model_name (str): The name of the LLM model to use.
 
     Returns:
         str: The raw response from the LLM.
@@ -65,7 +67,7 @@ def raw_query_llm(messages: list[dict]) -> str:
         raise ValueError("LLM messages cannot be empty")
 
     completion = client.chat.completions.create(
-        model="meta-llama/llama-3.3-70b-instruct",
+        model=model_name,
         messages=messages,
         extra_body={
             "provider": {
