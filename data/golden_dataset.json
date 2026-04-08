@@ -1,0 +1,27 @@
+[
+  {
+    "id": "query_1",
+    "question": "Покажи все объекты в Петербурге, по работам связанным с покраской, отоплением, вентиляцией, водоснабжением и кондиционированием. \nРезультат должен включать город, название объекта, имя подрядчика, название работы, ед.изм, плановый и фактический объем работ.",
+    "golden_sql": "SELECT\n  o.city, o.name, c.name, w.work_type, w.unit,\n  ROUND(p.plan_vol, 2) AS plan_vol, ROUND(p.fact_vol, 2) AS fact_vol\nFROM objects AS o\nJOIN works AS w ON o.id = w.object_id\nJOIN contractors AS c ON w.id = c.work_id\nJOIN progress AS p ON w.id = p.work_id\nWHERE o.city = 'Санкт-Петербург'\n  AND w.work_type IN ('Окраска', 'Отопление', 'Вентиляция', 'Водоснабжение')"
+  },
+  {
+    "id": "query_2",
+    "question": "Найди все работы, где фактическое выполнение работ больше 90%.\nВыведи столбец с выполнением в процентах назови его прогресс выполнения.\nРезультат должен включать название объекта, тип работы, единицу измерения, плановый и фактический объемы, прогресс выполнения.",
+    "golden_sql": "SELECT\n  o.name AS название_объекта, w.work_type AS тип_работы,\n  w.unit AS единица_измерения, ROUND(p.plan_vol, 2) AS плановый_объем,\n  ROUND(p.fact_vol, 2) AS фактический_объем,\n  ROUND(p.fact_vol * 100.0 / p.plan_vol, 2) AS прогресс_выполнения\nFROM progress AS p\nJOIN works AS w ON p.work_id = w.id\nJOIN objects AS o ON w.object_id = o.id\nWHERE p.fact_vol > 0.9 * p.plan_vol"
+  },
+  {
+    "id": "query_3",
+    "question": "Каков общий плановый объем работ по каждому подрядчику?\nРезультат должен содержать имя подрядчика, название работы, ед.изм. и сумму всех плановых объемов его работ.",
+    "golden_sql": "SELECT\n  c.name, w.work_type, w.unit,\n  ROUND(SUM(p.plan_vol), 2) AS total_plan_vol\nFROM contractors AS c\nJOIN works AS w ON c.work_id = w.id\nJOIN progress AS p ON w.id = p.work_id\nGROUP BY c.name, w.work_type, w.unit"
+  },
+  {
+    "id": "query_4",
+    "question": "Покажи агрегированные данные по всем работам для объекта 'Спортивный зал' в Петербурге, сгруппированные по подрядчику и типу работы.\nРезультат должен включать: подрядчика, название работы, единицу измерения, суммарный плановый объем, суммарный фактический объем, процент готовности (факт / план).\nГруппировка: по имени подрядчика, типу работы и единице измерения.\nИспользуй SUM для агрегации объемов.",
+    "golden_sql": "SELECT\n  contractors.name, works.work_type, works.unit,\n  ROUND(SUM(progress.plan_vol), 2) AS план, ROUND(SUM(progress.fact_vol), 2) AS факт,\n  ROUND(SUM(progress.fact_vol) * 100.0 / SUM(progress.plan_vol), 2) AS percent_ready\nFROM works\nJOIN objects ON works.object_id = objects.id\nJOIN contractors ON works.id = contractors.work_id\nJOIN progress ON works.id = progress.work_id\nWHERE objects.name IN ('Спортивный зал 12', 'Спортивный зал 14', 'Спортивный зал 24', 'Спортивный зал 29', 'Спортивный зал 37')\n  AND objects.city = 'Санкт-Петербург'\nGROUP BY contractors.name, works.work_type, works.unit"
+  },
+  {
+    "id": "query_5",
+    "question": "Покажи все индивидуальные строки (БЕЗ агрегации) по работам типа 'Кровельные работы' для всех объектов в Екатеринбурге.\nРезультат должен содержать: название объекта, подрядчика, единицу измерения, плановый объем и фактический объем каждой работы.\nНЕ агрегируй, показывай каждую работу отдельной строкой.",
+    "golden_sql": "SELECT\n  o.name, c.name, w.unit,\n  ROUND(p.plan_vol, 2) AS plan_vol, ROUND(p.fact_vol, 2) AS fact_vol\nFROM works AS w\nJOIN objects AS o ON w.object_id = o.id\nJOIN contractors AS c ON w.id = c.work_id\nJOIN progress AS p ON w.id = p.work_id\nWHERE w.work_type = 'Кровельные работы'\n  AND o.city = 'Екатеринбург'"
+  }
+]
