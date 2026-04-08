@@ -24,6 +24,9 @@ GOLDEN_PATH = Path("data/golden_dataset.json")
 def _get_default_database_url() -> str:
     """Находит тестовую SQLite-базу в папке data/db по шаблону construction*.db.
 
+    Args:
+        None: Функция не принимает аргументы.
+
     Returns:
         str: URL подключения SQLAlchemy к найденной SQLite-базе.
     """
@@ -37,11 +40,26 @@ def _get_default_database_url() -> str:
 
 @pytest.fixture(scope="module")
 def engine():
+    """Создаёт SQLAlchemy engine для интеграционных тестов.
+
+    Args:
+        None: Fixture не принимает аргументы.
+
+    Returns:
+        object: Подключение к тестовой SQLite-базе.
+    """
     return create_engine(_get_default_database_url())
 
 
 def _normalize_rows(rows):
-    """Нормализует строки для сравнения: округляет float до 2 знаков."""
+    """Нормализует строки результата для устойчивого сравнения.
+
+    Args:
+        rows: Последовательность строк результата SQL-запроса.
+
+    Returns:
+        set: Множество кортежей с округлением float до двух знаков.
+    """
     return {
         tuple(round(v, 2) if isinstance(v, float) else v for v in row) for row in rows
     }
@@ -54,7 +72,15 @@ def _normalize_rows(rows):
     ids=[item["id"] for item in json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))],
 )
 def test_execution_accuracy(item, engine):
-    """Pipeline должен возвращать те же строки, что и эталонный SQL."""
+    """Проверяет совпадение результата пайплайна с эталонным SQL из golden dataset.
+
+    Args:
+        item: Элемент golden dataset с вопросом и эталонным SQL.
+        engine: Fixture с подключением к тестовой SQLite-базе.
+
+    Returns:
+        None: Сравнивает ожидаемые и фактические строки через assert.
+    """
     messages = build_messages(item["question"], engine)
     actual = execute_sql_query(engine, messages, REVIEW_PROMPT)
 

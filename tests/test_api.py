@@ -1,6 +1,5 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
@@ -11,12 +10,28 @@ VALID_SQL = "SELECT id FROM works"
 
 
 def _make_app(mock_engine):
+    """Создаёт приложение с подменённой зависимостью подключения к БД.
+
+    Args:
+        mock_engine: Мок-объект SQLAlchemy engine для тестов.
+
+    Returns:
+        object: Экземпляр FastAPI-приложения с переопределённой зависимостью.
+    """
     app = create_app()
     app.dependency_overrides[get_engine] = lambda: mock_engine
     return app
 
 
 def _mock_engine_ok():
+    """Создаёт mock engine с успешным выполнением SQL-запроса.
+
+    Args:
+        None: Функция не принимает аргументы.
+
+    Returns:
+        MagicMock: Настроенный mock engine, возвращающий две строки результата.
+    """
     result = MagicMock()
     result.fetchall.return_value = [(1,), (2,)]
     conn = MagicMock()
@@ -34,6 +49,14 @@ def _mock_engine_ok():
 
 
 def test_health_ok():
+    """Проверяет успешный ответ health endpoint при доступной БД.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = _mock_engine_ok()
     app = _make_app(engine)
     with TestClient(app) as client:
@@ -45,6 +68,14 @@ def test_health_ok():
 
 
 def test_health_db_unreachable():
+    """Проверяет признак недоступности БД в ответе health endpoint.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = MagicMock()
     engine.connect.side_effect = Exception("connection refused")
     app = _make_app(engine)
@@ -63,6 +94,15 @@ FAKE_MESSAGES = [{"role": "system", "content": "sys"}, {"role": "user", "content
 
 
 def _patch_pipeline(sql_result, answer="Тестовый ответ"):
+    """Создаёт набор patch-объектов для изоляции пайплайна в API-тестах.
+
+    Args:
+        sql_result: Значение, которое должен вернуть execute_sql_query.
+        answer (str): Значение, которое должен вернуть generate_answer.
+
+    Returns:
+        tuple: Набор patch-объектов для основных вызовов внутри endpoint chat.
+    """
     return (
         patch("src.api.routes.build_messages", return_value=FAKE_MESSAGES),
         patch("src.api.routes.execute_sql_query", return_value=sql_result),
@@ -71,6 +111,14 @@ def _patch_pipeline(sql_result, answer="Тестовый ответ"):
 
 
 def test_chat_returns_ok_with_rows():
+    """Проверяет успешный ответ chat endpoint при наличии строк результата.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = _mock_engine_ok()
     app = _make_app(engine)
 
@@ -87,6 +135,14 @@ def test_chat_returns_ok_with_rows():
 
 
 def test_chat_returns_cannot_answer():
+    """Проверяет статус cannot_answer при отказе SQL-пайплайна.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = _mock_engine_ok()
     app = _make_app(engine)
 
@@ -102,6 +158,14 @@ def test_chat_returns_cannot_answer():
 
 
 def test_chat_returns_error_on_pipeline_error():
+    """Проверяет статус error при возврате строки ошибки из пайплайна.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = _mock_engine_ok()
     app = _make_app(engine)
 
@@ -116,6 +180,14 @@ def test_chat_returns_error_on_pipeline_error():
 
 
 def test_chat_validates_empty_question():
+    """Проверяет валидацию пустого вопроса в запросе chat.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = _mock_engine_ok()
     app = _make_app(engine)
     with TestClient(app) as client:
@@ -124,6 +196,14 @@ def test_chat_validates_empty_question():
 
 
 def test_chat_validates_too_long_question():
+    """Проверяет валидацию слишком длинного вопроса в запросе chat.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет HTTP-ответ через assert.
+    """
     engine = _mock_engine_ok()
     app = _make_app(engine)
     with TestClient(app) as client:
