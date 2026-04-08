@@ -3,13 +3,14 @@ from sqlalchemy.engine import Engine
 
 
 def get_schema_from_db(inspector) -> dict[str, str]:
-    """
-    Собирает краткое текстовое описание схемы БД по таблицам и внешним ключам.
+    """Собирает краткое текстовое описание схемы БД по таблицам и внешним ключам.
 
     Args:
         inspector: SQLAlchemy Inspector, созданный для нужного Engine.
+
     Returns:
-        dict[str, str]: Ключ - имя таблицы, значение - строка с перечислением полей и связей.
+        dict[str, str]: Словарь, где ключом является имя таблицы, а значением -
+            строка с перечислением колонок и внешних ключей.
     """
     schema_parts = {}
 
@@ -18,25 +19,26 @@ def get_schema_from_db(inspector) -> dict[str, str]:
         foreign_keys = inspector.get_foreign_keys(table_name)
         for fk in foreign_keys:
             for col in fk["constrained_columns"]:
-                columns.append(
-                    f"{col} (foreign key to table '{fk['referred_table']}')"
-                )
+                columns.append(f"{col} (foreign key to table '{fk['referred_table']}')")
         schema_parts[table_name] = ", ".join(columns)
 
     return schema_parts
 
 
 def build_prompt_values(engine: Engine) -> dict[str, str]:
-    """
-    Возвращает dict со справочными строками для подстановки в SYSTEM_PROMPT.
+    """Формирует справочные значения из БД для подстановки в системный промпт.
 
     Args:
-        engine: SQLAlchemy Engine для подключения к БД.
-    Returns: dict[str, str]:
-        Keys: contractors_str, exact_work_types_str, work_types_str, objects_str, cities_str
+        engine (Engine): SQLAlchemy Engine для подключения к БД.
+
+    Returns:
+        dict[str, str]: Словарь со строками contractors_str, exact_work_types_str,
+            work_types_str, objects_str и cities_str.
     """
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT DISTINCT name FROM contractors ORDER BY name"))
+        result = conn.execute(
+            text("SELECT DISTINCT name FROM contractors ORDER BY name")
+        )
         contractors = [row[0] for row in result.fetchall()]
 
         result = conn.execute(

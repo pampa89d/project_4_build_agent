@@ -45,7 +45,14 @@ DISALLOWED_TABLE_NAMES = {
 
 
 def strip_markdown_sql(response: str | None) -> str:
-    """Возвращает чистый SQL, даже если модель обернула его в markdown."""
+    """Извлекает SQL из ответа модели, удаляя markdown-обёртки.
+
+    Args:
+        response (str | None): Исходный текстовый ответ модели.
+
+    Returns:
+        str: Очищенный SQL или исходный текст без внешних пробелов.
+    """
     cleaned = (response or "").strip()
     fenced_match = re.search(
         r"```(?:sql)?\s*\n?(.*?)```", cleaned, re.DOTALL | re.IGNORECASE
@@ -56,13 +63,27 @@ def strip_markdown_sql(response: str | None) -> str:
 
 
 def is_cannot_answer(response: str | None) -> bool:
-    """Проверяет, является ли ответ модели сигналом о невозможности построить запрос."""
+    """Проверяет, означает ли ответ отказ от построения SQL.
+
+    Args:
+        response (str | None): Текст ответа модели.
+
+    Returns:
+        bool: True, если ответ соответствует одному из вариантов отказа.
+    """
     normalized = (response or "").strip().rstrip(" .!?").strip()
     return normalized in REFUSAL_RESPONSES
 
 
 def normalize_llm_sql_response(response: str | None) -> str:
-    """Преобразует ответ LLM в чистый SQL или один из refusal-ответов."""
+    """Нормализует ответ LLM до чистого SQL или служебного отказа.
+
+    Args:
+        response (str | None): Исходный ответ модели.
+
+    Returns:
+        str: SQL-запрос без лишнего текста либо строка отказа.
+    """
     cleaned = strip_markdown_sql(response)
 
     if not cleaned:
@@ -85,7 +106,14 @@ def normalize_llm_sql_response(response: str | None) -> str:
 
 
 def validate_safe_sql(sql: str) -> str:
-    """Разрешает только один read-only SQL-запрос для SQLite."""
+    """Проверяет, что SQL безопасен и содержит только один read-only запрос.
+
+    Args:
+        sql (str): SQL-запрос для проверки.
+
+    Returns:
+        str: Тот же SQL-запрос, если он прошёл проверку безопасности.
+    """
     raw_sql = (sql or "").strip()
     if not raw_sql:
         raise ValueError("Пустой SQL-запрос")
@@ -120,7 +148,14 @@ def validate_safe_sql(sql: str) -> str:
 
 
 def _validate_or_cannot_answer(sql: str) -> str:
-    """Возвращает SQL без изменений или PROMPT_INJECTION при срабатывании защиты."""
+    """Проверяет SQL и заменяет небезопасный запрос на служебный отказ.
+
+    Args:
+        sql (str): SQL-запрос для проверки.
+
+    Returns:
+        str: Исходный SQL или строка PROMPT_INJECTION.
+    """
     try:
         return validate_safe_sql(sql)
     except Exception:
@@ -128,7 +163,14 @@ def _validate_or_cannot_answer(sql: str) -> str:
 
 
 def _transpile(sql: str) -> str:
-    """Преобразует SQL в стандартизированный формат."""
+    """Нормализует формат SQL-запроса средствами sqlglot.
+
+    Args:
+        sql (str): SQL-запрос в диалекте SQLite.
+
+    Returns:
+        str: Отформатированный SQL-запрос.
+    """
     return sqlglot.transpile(sql, read="sqlite", write="sqlite", pretty=True)[0]
 
 
@@ -138,16 +180,16 @@ def execute_sql_query(
     review_prompt: str,
     model_name: str = DEFAULT_MODEL,
 ) -> list[tuple] | str:
-    """Генерирует, проверяет и выполняет SQL-запрос.
+    """Генерирует, проверяет, при необходимости исправляет и выполняет SQL-запрос.
 
     Args:
-        engine: SQLAlchemy engine.
-        messages: Список сообщений [{role, content}]. Не мутируется.
-        review_prompt: Промпт для LLM-проверки сгенерированного SQL.
-        model_name: Идентификатор модели на OpenRouter.
+        engine (Engine): SQLAlchemy engine для выполнения запросов.
+        messages (list[dict]): Список сообщений вида {role, content}. Исходный список не мутируется.
+        review_prompt (str): Промпт для второго прохода LLM-проверки SQL.
+        model_name (str): Идентификатор модели на OpenRouter.
 
     Returns:
-        Список строк результата или строка с ошибкой / refusal-ответом.
+        list[tuple] | str: Результат SQL-запроса в виде списка строк либо строка ошибки/отказа.
     """
     working_messages = [m.copy() for m in messages]
 
@@ -214,3 +256,40 @@ def execute_sql_query(
             return result.fetchall()
         except Exception as fix_err:
             return f"Ошибка после попытки исправления: {fix_err}"
+
+
+_ANSWER_PROMPT_TEMPLATE = (
+    "Пользователь спросил: {question}\n\n"
+    "Результат SQL-запроса ({row_count} строк):\n{rows_text}\n\n"
+    "Сформулируй краткий и понятный ответ на русском языке.\n"
+    "Не упоминай SQL. Только факты из данных."
+)
+
+
+def generate_answer(
+    question: str,
+    sql_result: list[tuple] | str,
+    model_name: str = DEFAULT_MODEL,
+) -> str:
+    """Синтезирует ответ на естественном языке из результата SQL-запроса.
+
+    Args:
+        question (str): Исходный вопрос пользователя.
+        sql_result (list[tuple] | str): Результат execute_sql_query — список строк или строка
+            с ошибкой/отказом.
+        model_name (str): Идентификатор модели на OpenRouter.
+
+    Returns:
+        str: Ответ на естественном языке либо исходная строка ошибки/отказа.
+    """
+    if isinstance(sql_result, str):
+        return sql_result
+
+    rows_text = "\n".join(str(row) for row in sql_result[:50])
+    prompt = _ANSWER_PROMPT_TEMPLATE.format(
+        question=question,
+        row_count=len(sql_result),
+        rows_text=rows_text,
+    )
+    messages = [{"role": "user", "content": prompt}]
+    return query_llm(messages, model_name)
