@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ':*)",
+      "Bash(python -m pytest tests/test_pipeline_unit.py tests/test_prompts_unit.py tests/test_api.py -v)",
+      "Bash(python -m pytest tests/test_pipeline_unit.py tests/test_prompts_unit.py tests/test_api.py -v --tb=no -q)"
+    ]
+  }
+}

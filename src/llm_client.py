@@ -11,20 +11,15 @@ if not openrouter_api_key:
 
 
 def query_llm(messages: list[dict], model_name: str) -> str:
-    """
-    Queries the LLM with the provided messages and returns the response.
+    """Отправляет список сообщений в LLM и возвращает текст ответа.
 
     Args:
-        messages (list[dict]): A list of messages to send to the LLM.
-            Example:
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "What is the capital of France?"}
-            ]
-        model_name (str): The name of the LLM model to use.
+        messages (list[dict]): Список сообщений в формате chat completion.
+            Каждый элемент должен содержать ключи role и content.
+        model_name (str): Имя модели, которая будет вызвана через OpenRouter.
 
     Returns:
-        str: The response from the LLM.
+        str: Текстовое содержимое ответа модели.
     """
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
@@ -43,20 +38,14 @@ def query_llm(messages: list[dict], model_name: str) -> str:
 
 
 def raw_query_llm(messages: list[dict], model_name: str) -> str:
-    """
-    Queries the LLM with the provided messages and returns the raw response without any processing.
+    """Отправляет список сообщений в LLM и возвращает сырой объект ответа.
 
     Args:
-        messages (list[dict]): A list of messages to send to the LLM.
-            Example:
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "What is the capital of France?"}
-            ]
-        model_name (str): The name of the LLM model to use.
+        messages (list[dict]): Список сообщений в формате chat completion.
+        model_name (str): Имя модели, которая будет вызвана через OpenRouter.
 
     Returns:
-        str: The raw response from the LLM.
+        str: Сырой ответ клиента OpenAI без дополнительной постобработки.
     """
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
