@@ -6,7 +6,7 @@
 
 Требует:
     - Файл .env с OPEN_ROUTE_API_KEY
-    - База данных data/db/construction_v2.db
+    - База данных data/db/construction*.db
 """
 
 import json
