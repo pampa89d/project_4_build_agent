@@ -1,102 +1,102 @@
 [
-  {
-    "id": "query_1",
-    "question": "Покажи все объекты в Петербурге, по работам связанным с покраской, отоплением, вентиляцией, водоснабжением и кондиционированием. \nРезультат должен включать город, название объекта, имя подрядчика, название работы, ед.изм, плановый и фактический объем работ.",
-    "golden_sql": "SELECT\n  o.city, o.name, c.name, w.work_type, w.unit,\n  ROUND(p.plan_vol, 2) AS plan_vol, ROUND(p.fact_vol, 2) AS fact_vol\nFROM objects AS o\nJOIN works AS w ON o.id = w.object_id\nJOIN contractors AS c ON w.id = c.work_id\nJOIN progress AS p ON w.id = p.work_id\nWHERE o.city = 'Санкт-Петербург'\n  AND w.work_type IN ('Окраска', 'Отопление', 'Вентиляция', 'Водоснабжение')"
-  },
-  {
-    "id": "query_2",
-    "question": "Найди все работы, где фактическое выполнение работ больше 90%.\nВыведи столбец с выполнением в процентах назови его прогресс выполнения.\nРезультат должен включать название объекта, тип работы, единицу измерения, плановый и фактический объемы, прогресс выполнения.",
-    "golden_sql": "SELECT\n  o.name AS название_объекта, w.work_type AS тип_работы,\n  w.unit AS единица_измерения, ROUND(p.plan_vol, 2) AS плановый_объем,\n  ROUND(p.fact_vol, 2) AS фактический_объем,\n  ROUND(p.fact_vol * 100.0 / p.plan_vol, 2) AS прогресс_выполнения\nFROM progress AS p\nJOIN works AS w ON p.work_id = w.id\nJOIN objects AS o ON w.object_id = o.id\nWHERE p.fact_vol > 0.9 * p.plan_vol"
-  },
-  {
-    "id": "query_3",
-    "question": "Каков общий плановый объем работ по каждому подрядчику?\nРезультат должен содержать имя подрядчика, название работы, ед.изм. и сумму всех плановых объемов его работ.",
-    "golden_sql": "SELECT\n  c.name, w.work_type, w.unit,\n  ROUND(SUM(p.plan_vol), 2) AS total_plan_vol\nFROM contractors AS c\nJOIN works AS w ON c.work_id = w.id\nJOIN progress AS p ON w.id = p.work_id\nGROUP BY c.name, w.work_type, w.unit"
-  },
-  {
-    "id": "query_4",
-    "question": "Покажи все индивидуальные строки (БЕЗ агрегации) по работам типа 'Кровельные работы' для всех объектов в Екатеринбурге.\nРезультат должен содержать: название объекта, подрядчика, единицу измерения, плановый объем и фактический объем каждой работы.\nНЕ агрегируй, показывай каждую работу отдельной строкой.",
-    "golden_sql": "SELECT\n  o.name, c.name, w.unit,\n  ROUND(p.plan_vol, 2) AS plan_vol, ROUND(p.fact_vol, 2) AS fact_vol\nFROM works AS w\nJOIN objects AS o ON w.object_id = o.id\nJOIN contractors AS c ON w.id = c.work_id\nJOIN progress AS p ON w.id = p.work_id\nWHERE w.work_type = 'Кровельные работы'\n  AND o.city = 'Екатеринбург'"
-  },
-  {
-    "id": "query_5",
-    "question": "На каких объектах работает ООО РазноРабота?",
-    "golden_sql": "SELECT DISTINCT o.name, o.city FROM contractors AS c JOIN works AS w ON c.work_id = w.id JOIN objects AS o ON w.object_id = o.id WHERE c.name = 'ООО РазноРабота'"
-  },
-  {
-    "id": "query_6",
-    "question": "Какой общий бюджет всех объектов в Воронеже?",
-    "golden_sql": "SELECT o.city, ROUND(SUM(o.budget), 2) FROM objects AS o WHERE o.city = 'Воронеж'"
-  },
-  {
-    "id": "query_7",
-    "question": "Сколько объектов в каждом городе?",
-    "golden_sql": "SELECT o.city, COUNT(*) FROM objects AS o GROUP BY o.city"
-  },
-  {
-    "id": "query_8",
-    "question": "Каков средний бюджет объекта в Казани?",
-    "golden_sql": "SELECT o.city, ROUND(AVG(o.budget), 2) FROM objects AS o WHERE o.city = 'Казань'"
-  },
-  {
-    "id": "query_9",
-    "question": "Покажи процент выполнения по каждому типу работ для Школа № 9.",
-    "golden_sql": "SELECT o.name, w.work_type, w.unit, ROUND(SUM(p.plan_vol), 2), ROUND(SUM(p.fact_vol), 2), ROUND(SUM(p.fact_vol) * 100.0 / SUM(p.plan_vol), 2) FROM progress AS p JOIN works AS w ON p.work_id = w.id JOIN objects AS o ON w.object_id = o.id WHERE o.name = 'Школа № 9' GROUP BY w.work_type, w.unit"
-  },
-  {
-    "id": "query_10",
-    "question": "Какой объект имеет самый большой бюджет?",
-    "golden_sql": "SELECT o.name, o.city, ROUND(o.budget, 2) FROM objects AS o ORDER BY o.budget DESC LIMIT 1"
-  },
-  {
-    "id": "query_11",
-    "question": "Покажи объекты, бюджет которых выше среднего по всем объектам.",
-    "golden_sql": "SELECT o.name, o.city, ROUND(o.budget, 2) FROM objects AS o WHERE o.budget > (SELECT AVG(o2.budget) FROM objects AS o2)"
-  },
-  {
-    "id": "query_12",
-    "question": "В каком городе больше всего объектов?",
-    "golden_sql": "SELECT o.city, COUNT(*) FROM objects AS o GROUP BY o.city ORDER BY COUNT(*) DESC LIMIT 1"
-  },
-  {
-    "id": "query_13",
-    "question": "Покажи работы, где фактическое выполнение меньше 50% от планового.",
-    "golden_sql": "SELECT o.name, w.work_type, w.unit, ROUND(SUM(p.plan_vol), 2), ROUND(SUM(p.fact_vol), 2), ROUND(SUM(p.fact_vol) * 100.0 / SUM(p.plan_vol), 2) FROM progress AS p JOIN works AS w ON p.work_id = w.id JOIN objects AS o ON w.object_id = o.id GROUP BY o.name, w.work_type, w.unit HAVING SUM(p.fact_vol) < 0.5 * SUM(p.plan_vol)"
-  },
-  {
-    "id": "query_14",
-    "question": "Покажи все работы за январь 2024 года.",
-    "golden_sql": "SELECT o.name, w.work_type, w.unit, ROUND(p.plan_vol, 2), ROUND(p.fact_vol, 2), p.date FROM progress AS p JOIN works AS w ON p.work_id = w.id JOIN objects AS o ON w.object_id = o.id WHERE p.date >= '2024-01-01' AND p.date < '2024-02-01'"
-  },
-  {
-    "id": "query_15",
-    "question": "Покажи все объекты в Москве и Казани.",
-    "golden_sql": "SELECT o.name, o.city, ROUND(o.budget, 2) FROM objects AS o WHERE o.city IN ('Москва', 'Казань')"
-  },
-  {
-    "id": "query_16",
-    "question": "На каких объектах работают ПАО МегаСтрой и ООО Новый Век?",
-    "golden_sql": "SELECT DISTINCT c.name, o.name, o.city FROM contractors AS c JOIN works AS w ON c.work_id = w.id JOIN objects AS o ON w.object_id = o.id WHERE c.name IN ('ПАО МегаСтрой', 'ООО Новый Век')"
-  },
-  {
-    "id": "query_17",
-    "question": "Покажи разницу между плановым и фактическим объемом по всем типам работ для объекта Офисный центр Альфа 10.",
-    "golden_sql": "SELECT w.work_type, w.unit, ROUND(SUM(p.plan_vol), 2), ROUND(SUM(p.fact_vol), 2), ROUND(SUM(p.plan_vol) - SUM(p.fact_vol), 2) FROM progress AS p JOIN works AS w ON p.work_id = w.id JOIN objects AS o ON w.object_id = o.id WHERE o.name = 'Офисный центр Альфа 10' GROUP BY w.work_type, w.unit"
-  },
-  {
-    "id": "query_18",
-    "question": "Какие работы выполняет ЗАО Качественно на объекте Больница 18?",
-    "golden_sql": "SELECT w.work_type, w.unit FROM contractors AS c JOIN works AS w ON c.work_id = w.id JOIN objects AS o ON w.object_id = o.id WHERE c.name = 'ЗАО Качественно' AND o.name = 'Больница 18'"
-  },
-  {
-    "id": "query_19",
-    "question": "Какой объект имеет самый маленький бюджет?",
-    "golden_sql": "SELECT o.name, o.city, ROUND(o.budget, 2) FROM objects AS o ORDER BY o.budget LIMIT 1"
-  },
-  {
-    "id": "query_20",
-    "question": "Сколько подрядчиков работает на каждом объекте?",
-    "golden_sql": "SELECT o.name, o.city, COUNT(DISTINCT c.name) FROM contractors AS c JOIN works AS w ON c.work_id = w.id JOIN objects AS o ON w.object_id = o.id GROUP BY o.name, o.city"
-  }
+    {
+        "id": "query_1",
+        "question": "Покажи все объекты в Петербурге, по работам связанным с покраской, отоплением, вентиляцией, водоснабжением и кондиционированием. \nРезультат должен включать город, название объекта, имя подрядчика, название работы, ед.изм, плановый и фактический объем работ.",
+        "golden_sql": "SELECT\n  T1.city, T1.name, T3.name, T2.work_type, T2.unit, ROUND(T4.plan_vol, 2) AS plan_vol, ROUND(T4.fact_vol, 2) AS fact_vol\nFROM objects AS T1\nJOIN works AS T2 ON T1.id = T2.object_id\nJOIN contractors AS T3 ON T2.id = T3.work_id\nJOIN progress AS T4 ON T2.id = T4.work_id\nWHERE T1.city = 'Санкт-Петербург'\n  AND T2.work_type IN ('Окраска', 'Отопление', 'Вентиляция', 'Водоснабжение')"
+    },
+    {
+        "id": "query_2",
+        "question": "Найди все работы, где фактическое выполнение работ больше 90%.\nВыведи столбец с выполнением в процентах назови его прогресс выполнения.\nРезультат должен включать название объекта, тип работы, единицу измерения, плановый и фактический объемы, прогресс выполнения.",
+        "golden_sql": "SELECT\n  T3.name AS название_объекта, T2.work_type AS тип_работы,\n  T2.unit AS единица_измерения, ROUND(T1.plan_vol, 2) AS плановый_объем, ROUND(T1.fact_vol, 2) AS фактический_объем, ROUND(T1.fact_vol * 100.0 / T1.plan_vol, 2) AS прогресс_выполнения\nFROM progress AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T1.fact_vol > 0.9 * T1.plan_vol"
+    },
+    {
+        "id": "query_3",
+        "question": "Каков общий плановый объем работ по каждому подрядчику?\nРезультат должен содержать имя подрядчика, название работы, ед.изм. и сумму всех плановых объемов его работ.",
+        "golden_sql": "SELECT T1.name, T2.work_type, T2.unit, ROUND(SUM(T3.plan_vol), 2) AS total_plan_vol\nFROM contractors AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN progress AS T3 ON T2.id = T3.work_id\nGROUP BY T1.name, T2.work_type, T2.unit"
+    },
+    {
+        "id": "query_4",
+        "question": "Покажи все индивидуальные строки (БЕЗ агрегации) по работам типа 'Кровельные работы' для всех объектов в Екатеринбурге.\nРезультат должен содержать: название объекта, подрядчика, единицу измерения, плановый объем и фактический объем каждой работы.\nНЕ агрегируй, показывай каждую работу отдельной строкой.",
+        "golden_sql": "SELECT T2.name, T3.name, T1.unit, ROUND(T4.plan_vol, 2) AS plan_vol, ROUND(T4.fact_vol, 2) AS fact_vol\nFROM works AS T1\nJOIN objects AS T2 ON T1.object_id = T2.id\nJOIN contractors AS T3 ON T1.id = T3.work_id\nJOIN progress AS T4 ON T1.id = T4.work_id\nWHERE T1.work_type = 'Кровельные работы'\n  AND T2.city = 'Екатеринбург'"
+    },
+    {
+        "id": "query_5",
+        "question": "На каких объектах работает ООО РазноРабота?",
+        "golden_sql": "SELECT DISTINCT T3.name, T3.city\nFROM contractors AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T1.name = 'ООО РазноРабота'"
+    },
+    {
+        "id": "query_6",
+        "question": "Какой общий бюджет всех объектов в Воронеже?",
+        "golden_sql": "SELECT T1.city, ROUND(SUM(T1.budget), 2)\nFROM objects AS T1\nWHERE T1.city = 'Воронеж'"
+    },
+    {
+        "id": "query_7",
+        "question": "Сколько объектов в каждом городе?",
+        "golden_sql": "SELECT T1.city, ROUND(COUNT(*), 2)\nFROM objects AS T1\nGROUP BY T1.city"
+    },
+    {
+        "id": "query_8",
+        "question": "Каков средний бюджет объекта в Казани?",
+        "golden_sql": "SELECT T1.city, ROUND(AVG(T1.budget), 2)\nFROM objects AS T1\nWHERE T1.city = 'Казань'"
+    },
+    {
+        "id": "query_9",
+        "question": "Покажи процент выполнения по каждому типу работ для Школа № 9.",
+        "golden_sql": "SELECT T3.name, T2.work_type, T2.unit, ROUND(SUM(T1.plan_vol), 2), ROUND(SUM(T1.fact_vol), 2), ROUND(SUM(T1.fact_vol) * 100.0 / SUM(T1.plan_vol), 2)\nFROM progress AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T3.name = 'Школа № 9'\nGROUP BY T3.name, T2.work_type, T2.unit"
+    },
+    {
+        "id": "query_10",
+        "question": "Какой объект имеет самый большой бюджет?",
+        "golden_sql": "SELECT T1.name, T1.city, ROUND(T1.budget, 2)\nFROM objects AS T1\nORDER BY T1.budget DESC LIMIT 1"
+    },
+    {
+        "id": "query_11",
+        "question": "Покажи объекты, бюджет которых выше среднего по всем объектам.",
+        "golden_sql": "SELECT T1.name, T1.city, ROUND(T1.budget, 2)\nFROM objects AS T1\nWHERE T1.budget > (SELECT AVG(T2.budget) FROM objects AS T2)"
+    },
+    {
+        "id": "query_12",
+        "question": "В каком городе больше всего объектов?",
+        "golden_sql": "SELECT T1.city, ROUND(COUNT(*), 2)\nFROM objects AS T1\nGROUP BY T1.city\nORDER BY COUNT(*) DESC LIMIT 1"
+    },
+    {
+        "id": "query_13",
+        "question": "Покажи работы, где фактическое выполнение меньше 50% от планового.",
+        "golden_sql": "SELECT T3.name, T2.work_type, T2.unit, ROUND(SUM(T1.plan_vol), 2), ROUND(SUM(T1.fact_vol), 2), ROUND(SUM(T1.fact_vol) * 100.0 / SUM(T1.plan_vol), 2)\nFROM progress AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nGROUP BY T3.name, T2.work_type, T2.unit\nHAVING SUM(T1.fact_vol) < 0.5 * SUM(T1.plan_vol)"
+    },
+    {
+        "id": "query_14",
+        "question": "Покажи все работы за январь 2024 года.",
+        "golden_sql": "SELECT T3.name, T2.work_type, T2.unit, ROUND(T1.plan_vol, 2), ROUND(T1.fact_vol, 2), T1.date\nFROM progress AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T1.date >= '2024-01-01' AND T1.date < '2024-02-01'"
+    },
+    {
+        "id": "query_15",
+        "question": "Покажи все объекты в Москве и Казани.",
+        "golden_sql": "SELECT T1.name, T1.city, ROUND(T1.budget, 2)\nFROM objects AS T1\nWHERE T1.city IN ('Москва', 'Казань')"
+    },
+    {
+        "id": "query_16",
+        "question": "На каких объектах работают ПАО МегаСтрой и ООО Новый Век?",
+        "golden_sql": "SELECT DISTINCT T1.name, T3.name, T3.city\nFROM contractors AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T1.name IN ('ПАО МегаСтрой', 'ООО Новый Век')"
+    },
+    {
+        "id": "query_17",
+        "question": "Покажи разницу между плановым и фактическим объемом по всем типам работ для объекта Офисный центр Альфа 10.",
+        "golden_sql": "SELECT T2.work_type, T2.unit, ROUND(SUM(T1.plan_vol), 2), ROUND(SUM(T1.fact_vol), 2), ROUND(SUM(T1.plan_vol) - SUM(T1.fact_vol), 2)\nFROM progress AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T3.name = 'Офисный центр Альфа 10'\nGROUP BY T2.work_type, T2.unit"
+    },
+    {
+        "id": "query_18",
+        "question": "Какие работы выполняет ЗАО Качественно на объекте Больница 18?",
+        "golden_sql": "SELECT T2.work_type, T2.unit\nFROM contractors AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nWHERE T1.name = 'ЗАО Качественно' AND T3.name = 'Больница 18'"
+    },
+    {
+        "id": "query_19",
+        "question": "Какой объект имеет самый маленький бюджет?",
+        "golden_sql": "SELECT T1.name, T1.city, ROUND(T1.budget, 2)\nFROM objects AS T1\nORDER BY T1.budget LIMIT 1"
+    },
+    {
+        "id": "query_20",
+        "question": "Сколько подрядчиков работает на каждом объекте?",
+        "golden_sql": "SELECT T3.name, T3.city, ROUND(COUNT(DISTINCT T1.name), 2)\nFROM contractors AS T1\nJOIN works AS T2 ON T1.work_id = T2.id\nJOIN objects AS T3 ON T2.object_id = T3.id\nGROUP BY T3.name, T3.city"
+    }
 ]

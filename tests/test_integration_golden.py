@@ -1,5 +1,5 @@
 """
-Интеграционные тесты: Execution Accuracy по golden dataset.
+Интеграционные тесты: сравнение SQL по golden dataset.
 
 Запуск:
     pytest tests/test_integration_golden.py --run-integration
@@ -11,11 +11,13 @@
 
 import json
 from pathlib import Path
+import re
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+import sqlglot
 
-from src.sql_layer import REVIEW_PROMPT, execute_sql_query
+from src.sql_layer import REVIEW_PROMPT, build_sql_query
 from src.sql_layer.prompts import build_messages
 
 GOLDEN_PATH = Path("data/golden_dataset.json")
@@ -51,18 +53,25 @@ def engine():
     return create_engine(_get_default_database_url())
 
 
-def _normalize_rows(rows):
-    """Нормализует строки результата для устойчивого сравнения.
+def _normalize_sql(sql: str) -> str:
+    """Приводит SQL к общему каноническому виду для синтаксического сравнения.
 
     Args:
-        rows: Последовательность строк результата SQL-запроса.
+        sql: Исходный SQL-запрос.
 
     Returns:
-        set: Множество кортежей с округлением float до двух знаков.
+        str: Очищенный и канонизированный SQL в диалекте SQLite.
     """
-    return {
-        tuple(round(v, 2) if isinstance(v, float) else v for v in row) for row in rows
-    }
+    cleaned = (sql or "").strip()
+    cleaned = re.sub(r"```(?:sql)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"```", "", cleaned)
+    cleaned = re.sub(r"--.*?$", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"/\*.*?\*/", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r";\s*$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    parsed = sqlglot.parse_one(cleaned, read="sqlite")
+    return parsed.sql(dialect="sqlite", pretty=True)
 
 
 @pytest.mark.integration
@@ -71,28 +80,29 @@ def _normalize_rows(rows):
     json.loads(GOLDEN_PATH.read_text(encoding="utf-8")),
     ids=[item["id"] for item in json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))],
 )
-def test_execution_accuracy(item, engine):
-    """Проверяет совпадение результата пайплайна с эталонным SQL из golden dataset.
+def test_sql_syntax_matches_golden(item, engine):
+    """Проверяет совпадение синтаксиса SQL пайплайна с эталонным SQL.
 
     Args:
         item: Элемент golden dataset с вопросом и эталонным SQL.
         engine: Fixture с подключением к тестовой SQLite-базе.
 
     Returns:
-        None: Сравнивает ожидаемые и фактические строки через assert.
+        None: Сравнивает канонизированные SQL-запросы через assert.
     """
     messages = build_messages(item["question"], engine)
-    actual = execute_sql_query(engine, messages, REVIEW_PROMPT)
+    actual_sql = build_sql_query(messages, REVIEW_PROMPT)
 
-    assert isinstance(actual, list), (
-        f"{item['id']}: pipeline вернул ошибку вместо строк: {actual}"
-    )
+    assert actual_sql not in {
+        "Невозможно ответить",
+        "Запрещенный SQL-запрос, невозможно ответить",
+    }, f"{item['id']}: pipeline вернул отказ вместо SQL: {actual_sql}"
 
-    with engine.connect() as conn:
-        expected = conn.execute(text(item["golden_sql"])).fetchall()
+    actual_normalized = _normalize_sql(actual_sql)
+    expected_normalized = _normalize_sql(item["golden_sql"])
 
-    assert _normalize_rows(actual) == _normalize_rows(expected), (
-        f"{item['id']}: ожидалось {len(expected)} строк, получено {len(actual)}\n"
-        f"Expected sample: {list(expected)[:3]}\n"
-        f"Actual sample:   {list(actual)[:3]}"
+    assert actual_normalized == expected_normalized, (
+        f"{item['id']}: SQL после нормализации не совпадает\n"
+        f"Expected SQL:\n{expected_normalized}\n\n"
+        f"Actual SQL:\n{actual_normalized}"
     )
