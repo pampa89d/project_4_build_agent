@@ -72,6 +72,52 @@ def test_build_system_prompt_injects_all_values():
     assert "Москва, Екатеринбург" in result
 
 
+def test_system_prompt_has_base_table_column_rule():
+    """Проверяет наличие правила про вывод всех колонок базовой таблицы.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет содержимое системного промпта через assert.
+    """
+    result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
+
+    assert "Если пользователь не указал конкретные колонки для вывода" in result
+    assert "для contractors это id, name, work_id" in result
+
+
+def test_system_prompt_has_aggregate_alias_rule():
+    """Проверяет наличие правила про унификацию алиасов агрегированных колонок.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет содержимое системного промпта через assert.
+    """
+    result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
+
+    assert "добавляй префикс sum_, avg_, min_, max_ или count_" in result
+    assert "SUM(budget) AS sum_budget" in result
+    assert "COUNT(*) AS count_objects" in result
+
+
+def test_system_prompt_forbids_aliases_for_non_aggregated_source_columns():
+    """Проверяет правило запрета алиасов у исходных неагрегированных колонок.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет содержимое системного промпта через assert.
+    """
+    result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
+
+    assert "Не назначай алиасы исходным колонкам" in result
+    assert "Алиасы разрешены только для агрегированных выражений" in result
+
+
 def test_build_system_prompt_no_raw_placeholders():
     """Проверяет отсутствие необработанных плейсхолдеров после рендера промпта.
 

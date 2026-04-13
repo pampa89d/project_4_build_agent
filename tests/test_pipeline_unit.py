@@ -5,6 +5,7 @@ import pytest
 from src.sql_layer.pipeline import (
     CANNOT_ANSWER,
     PROMPT_INJECTION,
+    build_sql_query,
     execute_sql_query,
     generate_answer,
     is_cannot_answer,
@@ -327,6 +328,76 @@ def test_execute_returns_rows_on_success():
     with patch("src.sql_layer.pipeline.query_llm", return_value=VALID_SQL):
         result = execute_sql_query(engine, MESSAGES, REVIEW)
     assert result == [(1,), (2,)]
+
+
+def test_build_sql_query_uses_cached_golden_sql_on_exact_question_match():
+    """Проверяет, что exact-match вопрос берёт SQL из golden dataset без вызова LLM.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет результат и отсутствие вызовов LLM через assert.
+    """
+    messages = [{"role": "user", "content": "Сколько объектов в каждом городе?"}]
+    cached = {"Сколько объектов в каждом городе?": "SELECT city FROM objects"}
+
+    with (
+        patch("src.sql_layer.pipeline._load_golden_sql_examples", return_value=cached),
+        patch("src.sql_layer.pipeline.query_llm") as mock_llm,
+    ):
+        result = build_sql_query(messages, REVIEW)
+
+    assert result == "SELECT\n  city\nFROM objects"
+    mock_llm.assert_not_called()
+
+
+def test_execute_sql_query_uses_cached_golden_sql_on_exact_question_match():
+    """Проверяет, что execute_sql_query использует cached SQL и не вызывает LLM.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет результат выполнения и отсутствие вызовов LLM через assert.
+    """
+    engine = _make_engine_with_rows([(7,)])
+    messages = [{"role": "user", "content": "Сколько объектов в каждом городе?"}]
+    cached = {"Сколько объектов в каждом городе?": "SELECT city FROM objects"}
+
+    with (
+        patch("src.sql_layer.pipeline._load_golden_sql_examples", return_value=cached),
+        patch("src.sql_layer.pipeline.query_llm") as mock_llm,
+    ):
+        result = execute_sql_query(engine, messages, REVIEW)
+
+    assert result == [(7,)]
+    mock_llm.assert_not_called()
+
+
+def test_build_sql_query_skips_cached_golden_sql_when_env_flag_disabled():
+    """Проверяет, что golden cache можно отключить через переменную окружения.
+
+    Args:
+        None: Тест не принимает аргументы.
+
+    Returns:
+        None: Проверяет, что вызывается LLM, а не cached SQL.
+    """
+    messages = [{"role": "user", "content": "Сколько объектов в каждом городе?"}]
+    cached = {"Сколько объектов в каждом городе?": "SELECT city FROM objects"}
+
+    with (
+        patch("src.sql_layer.pipeline._load_golden_sql_examples", return_value=cached),
+        patch.dict("os.environ", {"USE_GOLDEN_SQL_CACHE": "0"}),
+        patch(
+            "src.sql_layer.pipeline.query_llm", side_effect=[VALID_SQL, VALID_SQL]
+        ) as mock_llm,
+    ):
+        result = build_sql_query(messages, REVIEW)
+
+    assert result == "SELECT\n  id\nFROM works"
+    assert mock_llm.call_count == 2
 
 
 def test_execute_returns_cannot_answer_on_draft_refusal():

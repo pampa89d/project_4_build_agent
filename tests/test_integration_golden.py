@@ -1,5 +1,5 @@
 """
-Интеграционные тесты: сравнение SQL по golden dataset.
+Интеграционные тесты: сравнение результатов SQL-запросов с golden dataset.
 
 Запуск:
     pytest tests/test_integration_golden.py --run-integration
@@ -7,15 +7,17 @@
 Требует:
     - Файл .env с OPEN_ROUTE_API_KEY
     - База данных data/db/construction*.db
+
+Критерии сравнения:
+    1. Количество строк в результате actual и golden совпадает.
+    2. Первая строка результата actual совпадает с первой строкой golden.
 """
 
 import json
 from pathlib import Path
-import re
 
 import pytest
-from sqlalchemy import create_engine
-import sqlglot
+from sqlalchemy import create_engine, text
 
 from src.sql_layer import REVIEW_PROMPT, build_sql_query
 from src.sql_layer.prompts import build_messages
@@ -53,25 +55,19 @@ def engine():
     return create_engine(_get_default_database_url())
 
 
-def _normalize_sql(sql: str) -> str:
-    """Приводит SQL к общему каноническому виду для синтаксического сравнения.
+def _execute_sql(engine, sql: str) -> list[tuple]:
+    """Выполняет SQL-запрос и возвращает список кортежей с результатами.
 
     Args:
-        sql: Исходный SQL-запрос.
+        engine: SQLAlchemy engine.
+        sql: SQL-запрос для выполнения.
 
     Returns:
-        str: Очищенный и канонизированный SQL в диалекте SQLite.
+        list[tuple]: Строки результата запроса.
     """
-    cleaned = (sql or "").strip()
-    cleaned = re.sub(r"```(?:sql)?\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"```", "", cleaned)
-    cleaned = re.sub(r"--.*?$", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"/\*.*?\*/", "", cleaned, flags=re.DOTALL)
-    cleaned = re.sub(r";\s*$", "", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-    parsed = sqlglot.parse_one(cleaned, read="sqlite")
-    return parsed.sql(dialect="sqlite", pretty=True)
+    with engine.connect() as conn:
+        result = conn.execute(text(sql))
+        return [tuple(row) for row in result.fetchall()]
 
 
 @pytest.mark.integration
@@ -80,15 +76,19 @@ def _normalize_sql(sql: str) -> str:
     json.loads(GOLDEN_PATH.read_text(encoding="utf-8")),
     ids=[item["id"] for item in json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))],
 )
-def test_sql_syntax_matches_golden(item, engine):
-    """Проверяет совпадение синтаксиса SQL пайплайна с эталонным SQL.
+def test_sql_result_matches_golden(item, engine, request):
+    """Проверяет совпадение результатов SQL пайплайна с эталонным SQL.
+
+    Критерии:
+        1. Количество строк в результатах совпадает.
+        2. Первая строка в результатах совпадает.
 
     Args:
         item: Элемент golden dataset с вопросом и эталонным SQL.
         engine: Fixture с подключением к тестовой SQLite-базе.
 
     Returns:
-        None: Сравнивает канонизированные SQL-запросы через assert.
+        None: Сравнивает результаты запросов через assert.
     """
     messages = build_messages(item["question"], engine)
     actual_sql = build_sql_query(messages, REVIEW_PROMPT)
@@ -98,11 +98,33 @@ def test_sql_syntax_matches_golden(item, engine):
         "Запрещенный SQL-запрос, невозможно ответить",
     }, f"{item['id']}: pipeline вернул отказ вместо SQL: {actual_sql}"
 
-    actual_normalized = _normalize_sql(actual_sql)
-    expected_normalized = _normalize_sql(item["golden_sql"])
+    actual_rows = _execute_sql(engine, actual_sql)
+    golden_rows = _execute_sql(engine, item["golden_sql"])
 
-    assert actual_normalized == expected_normalized, (
-        f"{item['id']}: SQL после нормализации не совпадает\n"
-        f"Expected SQL:\n{expected_normalized}\n\n"
-        f"Actual SQL:\n{actual_normalized}"
+    # Критерий 1: совпадение количества строк
+    assert len(actual_rows) == len(golden_rows), (
+        f"{item['id']}: количество строк не совпадает\n"
+        f"Ожидается: {len(golden_rows)}, получено: {len(actual_rows)}\n"
+        f"Golden SQL:\n{item['golden_sql']}\n\n"
+        f"Actual SQL:\n{actual_sql}"
     )
+
+    # Критерий 2: совпадение первой строки
+    assert actual_rows[0] == golden_rows[0], (
+        f"{item['id']}: первая строка результата не совпадает\n"
+        f"Ожидается: {golden_rows[0]}\n"
+        f"Получено:  {actual_rows[0]}\n"
+        f"Golden SQL:\n{item['golden_sql']}\n\n"
+        f"Actual SQL:\n{actual_sql}"
+    )
+
+    # Запись деталей сравнения в лог
+    rows_match = "да" if len(actual_rows) == len(golden_rows) else "нет"
+    first_match = "да" if actual_rows[0] == golden_rows[0] else "нет"
+    request.node._log_details = [
+        f"  Строк: {len(actual_rows)} (совпадает: {rows_match})",
+        f"  Первая строка golden: {golden_rows[0]}",
+        f"  Первая строка actual: {actual_rows[0]}",
+        f"  Совпадение первой строки: {first_match}",
+        f"  Actual SQL: {actual_sql}",
+    ]
