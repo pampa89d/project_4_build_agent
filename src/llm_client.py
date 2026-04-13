@@ -32,6 +32,7 @@ def query_llm(messages: list[dict], model_name: str) -> str:
     completion = client.chat.completions.create(
         model=model_name,
         messages=messages,
+        temperature=0.0,
     )
 
     return completion.choices[0].message.content
@@ -63,6 +64,7 @@ def raw_query_llm(messages: list[dict], model_name: str) -> str:
                 "sort": "price",
             }
         },
+        temperature=0.0,
     )
 
     return completion
