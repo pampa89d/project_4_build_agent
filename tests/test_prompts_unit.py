@@ -1,4 +1,6 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.sql_layer.prompts import (
     REVIEW_PROMPT,
@@ -133,7 +135,8 @@ def test_build_system_prompt_no_raw_placeholders():
     assert "{contractors_str}" not in result
 
 
-def test_build_messages_roles():
+@pytest.mark.asyncio
+async def test_build_messages_roles():
     """Проверяет корректность ролей в списке сообщений для пайплайна.
 
     Args:
@@ -144,11 +147,16 @@ def test_build_messages_roles():
     """
     mock_engine = MagicMock()
     with (
-        patch("src.sql_layer.prompts.sa_inspect", return_value=MagicMock()),
-        patch("src.sql_layer.prompts.get_schema_from_db", return_value=FAKE_SCHEMAS),
-        patch("src.sql_layer.prompts.build_prompt_values", return_value=FAKE_VALUES),
+        patch(
+            "src.sql_layer.prompts.get_schema_from_db",
+            new=AsyncMock(return_value=FAKE_SCHEMAS),
+        ),
+        patch(
+            "src.sql_layer.prompts.build_prompt_values",
+            new=AsyncMock(return_value=FAKE_VALUES),
+        ),
     ):
-        messages = build_messages("Сколько объектов?", mock_engine)
+        messages = await build_messages("Сколько объектов?", mock_engine)
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
@@ -156,7 +164,8 @@ def test_build_messages_roles():
     assert messages[1]["content"] == "Сколько объектов?"
 
 
-def test_build_messages_system_contains_schema():
+@pytest.mark.asyncio
+async def test_build_messages_system_contains_schema():
     """Проверяет наличие схемы БД в системном сообщении.
 
     Args:
@@ -167,16 +176,22 @@ def test_build_messages_system_contains_schema():
     """
     mock_engine = MagicMock()
     with (
-        patch("src.sql_layer.prompts.sa_inspect", return_value=MagicMock()),
-        patch("src.sql_layer.prompts.get_schema_from_db", return_value=FAKE_SCHEMAS),
-        patch("src.sql_layer.prompts.build_prompt_values", return_value=FAKE_VALUES),
+        patch(
+            "src.sql_layer.prompts.get_schema_from_db",
+            new=AsyncMock(return_value=FAKE_SCHEMAS),
+        ),
+        patch(
+            "src.sql_layer.prompts.build_prompt_values",
+            new=AsyncMock(return_value=FAKE_VALUES),
+        ),
     ):
-        messages = build_messages("q", mock_engine)
+        messages = await build_messages("q", mock_engine)
 
     assert "works: id, work_type, unit" in messages[0]["content"]
 
 
-def test_build_messages_does_not_mutate_question():
+@pytest.mark.asyncio
+async def test_build_messages_does_not_mutate_question():
     """Проверяет, что сборка сообщений не изменяет исходный вопрос пользователя.
 
     Args:
@@ -188,10 +203,15 @@ def test_build_messages_does_not_mutate_question():
     question = "  Тест  "
     mock_engine = MagicMock()
     with (
-        patch("src.sql_layer.prompts.sa_inspect", return_value=MagicMock()),
-        patch("src.sql_layer.prompts.get_schema_from_db", return_value={}),
-        patch("src.sql_layer.prompts.build_prompt_values", return_value=FAKE_VALUES),
+        patch(
+            "src.sql_layer.prompts.get_schema_from_db",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "src.sql_layer.prompts.build_prompt_values",
+            new=AsyncMock(return_value=FAKE_VALUES),
+        ),
     ):
-        messages = build_messages(question, mock_engine)
+        messages = await build_messages(question, mock_engine)
 
     assert messages[1]["content"] == question
