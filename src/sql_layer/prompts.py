@@ -1,4 +1,3 @@
-from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.sql_layer.schema import build_prompt_values, get_schema_from_db
@@ -573,8 +572,7 @@ async def build_messages(
         list[dict]: Список из двух сообщений: системного промпта
             и пользовательского вопроса.
     """
-    inspector = sa_inspect(engine)
-    db_schemas = await get_schema_from_db(inspector)
+    db_schemas = await get_schema_from_db(engine)
     prompt_values = await build_prompt_values(engine)
     system_prompt = build_system_prompt(db_schemas=db_schemas, **prompt_values)
     return [

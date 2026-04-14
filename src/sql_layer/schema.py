@@ -1,12 +1,12 @@
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-async def get_schema_from_db(inspector) -> dict[str, str]:
+async def get_schema_from_db(engine: AsyncEngine) -> dict[str, str]:
     """Собирает краткое текстовое описание схемы БД по таблицам и внешним ключам.
 
     Args:
-        inspector: SQLAlchemy async Inspector, созданный для нужного AsyncEngine.
+        engine (AsyncEngine): SQLAlchemy AsyncEngine для подключения к БД.
 
     Returns:
         dict[str, str]: Словарь, где ключом является имя таблицы, а значением -
@@ -14,14 +14,29 @@ async def get_schema_from_db(inspector) -> dict[str, str]:
     """
     schema_parts = {}
 
-    table_names = await inspector.get_table_names()
-    for table_name in table_names:
-        columns = [c["name"] for c in await inspector.get_columns(table_name)]
-        foreign_keys = await inspector.get_foreign_keys(table_name)
-        for fk in foreign_keys:
-            for col in fk["constrained_columns"]:
-                columns.append(f"{col} (foreign key to table '{fk['referred_table']}')")
-        schema_parts[table_name] = ", ".join(columns)
+    async with engine.connect() as conn:
+        tables_result = await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        )
+        table_names = [row[0] for row in tables_result.fetchall()]
+
+        for table_name in table_names:
+            cols_result = await conn.execute(
+                text(f"PRAGMA table_info('{table_name}')")
+            )
+            columns = [row[1] for row in cols_result.fetchall()]
+
+            fks_result = await conn.execute(
+                text(f"PRAGMA foreign_key_list('{table_name}')")
+            )
+            for fk_row in fks_result.fetchall():
+                col_name = fk_row[3]
+                ref_table = fk_row[2]
+                columns.append(
+                    f"{col_name} (foreign key to table '{ref_table}')"
+                )
+
+            schema_parts[table_name] = ", ".join(columns)
 
     return schema_parts
 
