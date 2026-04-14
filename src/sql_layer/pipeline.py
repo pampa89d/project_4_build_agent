@@ -8,6 +8,7 @@ from sqlglot import exp
 from src.llm_client import query_llm
 
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
+SQL_TEMPERATURE = 0.0
 CANNOT_ANSWER = "Невозможно ответить"
 PROMPT_INJECTION = "Запрещенный SQL-запрос, невозможно ответить"
 REFUSAL_RESPONSES = {
@@ -193,7 +194,7 @@ def execute_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    draft_sql = query_llm(working_messages, model_name)
+    draft_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
     if is_cannot_answer(draft_sql_clean):
@@ -208,7 +209,7 @@ def execute_sql_query(
     working_messages.append({"role": "user", "content": review_prompt})
 
     # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = query_llm(working_messages, model_name)
+    reviewed_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
     if is_cannot_answer(reviewed_sql_clean):
@@ -238,7 +239,7 @@ def execute_sql_query(
         working_messages.append({"role": "assistant", "content": allowed_query})
         working_messages.append({"role": "user", "content": error_fix_prompt})
 
-        fixed_sql = query_llm(working_messages, model_name)
+        fixed_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
         fixed_sql_clean = normalize_llm_sql_response(fixed_sql)
 
         if is_cannot_answer(fixed_sql_clean):
@@ -287,7 +288,7 @@ def build_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    draft_sql = query_llm(working_messages, model_name)
+    draft_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
     if is_cannot_answer(draft_sql_clean):
@@ -302,7 +303,7 @@ def build_sql_query(
     working_messages.append({"role": "user", "content": review_prompt})
 
     # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = query_llm(working_messages, model_name)
+    reviewed_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
     if is_cannot_answer(reviewed_sql_clean):
@@ -349,4 +350,4 @@ def generate_answer(
         rows_text=rows_text,
     )
     messages = [{"role": "user", "content": prompt}]
-    return query_llm(messages, model_name)
+    return query_llm(messages, model_name, temperature=SQL_TEMPERATURE)
