@@ -73,7 +73,7 @@ def test_build_system_prompt_injects_all_values():
 
 
 def test_system_prompt_has_base_table_column_rule():
-    """Проверяет наличие правила про вывод всех колонок базовой таблицы.
+    """Проверяет наличие правила про вывод колонок в SELECT.
 
     Args:
         None: Тест не принимает аргументы.
@@ -83,12 +83,11 @@ def test_system_prompt_has_base_table_column_rule():
     """
     result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
 
-    assert "Если пользователь не указал конкретные колонки для вывода" in result
-    assert "для contractors это id, name, work_id" in result
+    assert "Если пользователь НЕ указал конкретные колонки" in result
 
 
 def test_system_prompt_has_aggregate_alias_rule():
-    """Проверяет наличие правила про унификацию алиасов агрегированных колонок.
+    """Проверяет наличие правила про обязательные алиасы агрегированных выражений.
 
     Args:
         None: Тест не принимает аргументы.
@@ -98,9 +97,8 @@ def test_system_prompt_has_aggregate_alias_rule():
     """
     result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
 
-    assert "добавляй префикс sum_, avg_, min_, max_ или count_" in result
-    assert "SUM(budget) AS sum_budget" in result
-    assert "COUNT(*) AS count_objects" in result
+    assert "Алиасы только у агрегатов и вычислений" in result
+    assert "ROUND(SUM(T2.plan_vol), 2) AS sum_plan_vol" in result
 
 
 def test_system_prompt_forbids_aliases_for_non_aggregated_source_columns():
@@ -114,8 +112,11 @@ def test_system_prompt_forbids_aliases_for_non_aggregated_source_columns():
     """
     result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
 
-    assert "Не назначай алиасы исходным колонкам" in result
-    assert "Алиасы разрешены только для агрегированных выражений" in result
+    assert "Не назначай алиасы исходным неагрегированным колонкам" in result
+    assert (
+        "Алиасы разрешены только для агрегированных и вычисляемых выражений"
+        in result
+    )
 
 
 def test_build_system_prompt_no_raw_placeholders():

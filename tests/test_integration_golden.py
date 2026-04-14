@@ -1,5 +1,4 @@
-"""
-Интеграционные тесты: сравнение результатов SQL-запросов с golden dataset.
+"""Интеграционные тесты: сравнение результатов SQL-запросов с golden dataset.
 
 Запуск:
     pytest tests/test_integration_golden.py --run-integration
@@ -17,57 +16,21 @@ import json
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
 
-from src.sql_layer import REVIEW_PROMPT, build_sql_query
 from src.sql_layer.prompts import build_messages
+from tests.helpers import build_sql_query_with_cache, create_test_engine, execute_sql
 
 GOLDEN_PATH = Path("data/golden_dataset.json")
-
-
-def _get_default_database_url() -> str:
-    """Находит тестовую SQLite-базу в папке data/db по шаблону construction*.db.
-
-    Args:
-        None: Функция не принимает аргументы.
-
-    Returns:
-        str: URL подключения SQLAlchemy к найденной SQLite-базе.
-    """
-    db_files = sorted((Path("data") / "db").glob("construction*.db"))
-    if not db_files:
-        raise FileNotFoundError(
-            "В папке data/db не найден файл базы данных по шаблону 'construction*.db'"
-        )
-    return f"sqlite:///{db_files[0].resolve()}"
 
 
 @pytest.fixture(scope="module")
 def engine():
     """Создаёт SQLAlchemy engine для интеграционных тестов.
 
-    Args:
-        None: Fixture не принимает аргументы.
-
     Returns:
         object: Подключение к тестовой SQLite-базе.
     """
-    return create_engine(_get_default_database_url())
-
-
-def _execute_sql(engine, sql: str) -> list[tuple]:
-    """Выполняет SQL-запрос и возвращает список кортежей с результатами.
-
-    Args:
-        engine: SQLAlchemy engine.
-        sql: SQL-запрос для выполнения.
-
-    Returns:
-        list[tuple]: Строки результата запроса.
-    """
-    with engine.connect() as conn:
-        result = conn.execute(text(sql))
-        return [tuple(row) for row in result.fetchall()]
+    return create_test_engine()
 
 
 @pytest.mark.integration
@@ -86,20 +49,21 @@ def test_sql_result_matches_golden(item, engine, request):
     Args:
         item: Элемент golden dataset с вопросом и эталонным SQL.
         engine: Fixture с подключением к тестовой SQLite-базе.
+        request: pytest request для записи логов.
 
     Returns:
         None: Сравнивает результаты запросов через assert.
     """
     messages = build_messages(item["question"], engine)
-    actual_sql = build_sql_query(messages, REVIEW_PROMPT)
+    actual_sql = build_sql_query_with_cache(messages)
 
     assert actual_sql not in {
         "Невозможно ответить",
         "Запрещенный SQL-запрос, невозможно ответить",
     }, f"{item['id']}: pipeline вернул отказ вместо SQL: {actual_sql}"
 
-    actual_rows = _execute_sql(engine, actual_sql)
-    golden_rows = _execute_sql(engine, item["golden_sql"])
+    actual_rows = execute_sql(engine, actual_sql)
+    golden_rows = execute_sql(engine, item["golden_sql"])
 
     # Критерий 1: совпадение количества строк
     assert len(actual_rows) == len(golden_rows), (
