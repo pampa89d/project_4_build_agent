@@ -43,7 +43,6 @@ DISALLOWED_TABLE_NAMES = {
     "sqlite_master",
 }
 
-
 def strip_markdown_sql(response: str | None) -> str:
     """Извлекает SQL из ответа модели, удаляя markdown-обёртки.
 
