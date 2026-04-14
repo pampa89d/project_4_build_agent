@@ -5,7 +5,7 @@ from sqlalchemy.engine import Engine
 import sqlglot
 from sqlglot import exp
 
-from src.llm_client import query_llm
+from src.agent.llm_client import query_llm
 
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
 SQL_TEMPERATURE = 0.0
