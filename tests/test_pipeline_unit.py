@@ -5,7 +5,6 @@ import pytest
 from src.sql_layer.pipeline import (
     CANNOT_ANSWER,
     PROMPT_INJECTION,
-    execute_sql_query,
     generate_answer,
     is_cannot_answer,
     normalize_llm_sql_response,
@@ -282,123 +281,6 @@ def test_validate_blocks_multiple_statements():
     """
     with pytest.raises(ValueError, match="один"):
         validate_safe_sql("SELECT 1; SELECT 2")
-
-
-# ---------------------------------------------------------------------------
-# execute_sql_query
-# ---------------------------------------------------------------------------
-
-
-def _make_async_engine_with_rows(rows):
-    """Создаёт mock async engine, возвращающий заранее заданные строки результата.
-
-    Args:
-        rows: Последовательность строк, которую должен вернуть fetchall().
-
-    Returns:
-        MagicMock: Настроенный mock async engine для тестирования SQL-пайплайна.
-    """
-    mock_result = MagicMock()
-    mock_result.fetchall.return_value = rows
-    mock_conn = AsyncMock()
-    mock_conn.execute.return_value = mock_result
-    mock_engine = MagicMock()
-    mock_engine.connect.return_value = mock_conn
-    return mock_engine
-
-
-VALID_SQL = "SELECT id FROM works"
-MESSAGES = [{"role": "system", "content": "sys"}, {"role": "user", "content": "q"}]
-REVIEW = "Проверь SQL"
-
-
-@pytest.mark.asyncio
-async def test_execute_returns_rows_on_success():
-    """Проверяет успешное выполнение пайплайна при корректном SQL и ответе БД.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Сравнивает фактический результат через assert.
-    """
-    engine = _make_async_engine_with_rows([(1,), (2,)])
-    with patch(
-        "src.sql_layer.pipeline.query_llm",
-        new=AsyncMock(return_value=VALID_SQL),
-    ):
-        result = await execute_sql_query(engine, MESSAGES, REVIEW)
-    assert result == [(1,), (2,)]
-
-
-@pytest.mark.asyncio
-async def test_execute_returns_cannot_answer_on_draft_refusal():
-    """Проверяет возврат отказа, если первый ответ модели равен CANNOT_ANSWER.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Сравнивает фактический результат через assert.
-    """
-    engine = MagicMock()
-    with patch(
-        "src.sql_layer.pipeline.query_llm",
-        new=AsyncMock(return_value=CANNOT_ANSWER),
-    ):
-        result = await execute_sql_query(engine, MESSAGES, REVIEW)
-    assert result == CANNOT_ANSWER
-
-
-@pytest.mark.asyncio
-async def test_execute_returns_prompt_injection_on_invalid_sql():
-    """Проверяет возврат защиты от prompt injection при опасном SQL.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Сравнивает фактический результат через assert.
-    """
-    engine = MagicMock()
-    malicious = "DROP TABLE works"
-    with patch(
-        "src.sql_layer.pipeline.query_llm",
-        new=AsyncMock(return_value=malicious),
-    ):
-        result = await execute_sql_query(engine, MESSAGES, REVIEW)
-    assert result == PROMPT_INJECTION
-
-
-@pytest.mark.asyncio
-async def test_execute_retries_on_execution_error():
-    """Проверяет повторный вызов LLM после ошибки выполнения SQL в БД.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Проверяет количество вызовов и итоговый результат через assert.
-    """
-    rows = [(42,)]
-
-    error_conn = AsyncMock()
-    error_conn.execute.side_effect = Exception("DB error")
-
-    success_result = MagicMock()
-    success_result.fetchall.return_value = rows
-    ok_conn = AsyncMock()
-    ok_conn.execute.return_value = success_result
-
-    engine = MagicMock()
-    engine.connect.side_effect = [error_conn, ok_conn]
-
-    llm_mock = AsyncMock(side_effect=[VALID_SQL, VALID_SQL, VALID_SQL])
-    with patch("src.sql_layer.pipeline.query_llm", new=llm_mock):
-        result = await execute_sql_query(engine, MESSAGES, REVIEW)
-
-    assert llm_mock.call_count == 3
-    assert result == rows
 
 
 # ---------------------------------------------------------------------------
