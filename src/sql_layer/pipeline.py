@@ -243,8 +243,8 @@ async def generate_answer(
 
     Args:
         question (str): Исходный вопрос пользователя.
-        sql_result (list[tuple] | str): Результат execute_sql_query — список строк или строка
-            с ошибкой/отказом.
+        sql_result (list[tuple] | str): Результат SQL-запроса —
+            список строк или строка с ошибкой/отказом.
         model_name (str): Идентификатор модели на OpenRouter.
 
     Returns:
