@@ -1,7 +1,5 @@
 import re
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
 import sqlglot
 from sqlglot import exp
 
@@ -180,101 +178,6 @@ def _transpile(sql: str) -> str:
         str: Отформатированный SQL-запрос.
     """
     return sqlglot.transpile(sql, read="sqlite", write="sqlite", pretty=True)[0]
-
-
-async def execute_sql_query(
-    engine: AsyncEngine,
-    messages: list[dict],
-    review_prompt: str,
-    model_name: str = DEFAULT_MODEL,
-) -> list[tuple] | str:
-    """Генерирует, проверяет, при необходимости исправляет и выполняет SQL-запрос.
-
-    Args:
-        engine (AsyncEngine): SQLAlchemy AsyncEngine для выполнения запросов.
-        messages (list[dict]): Список сообщений вида {role, content}. Исходный список не мутируется.
-        review_prompt (str): Промпт для второго прохода LLM-проверки SQL.
-        model_name (str): Идентификатор модели на OpenRouter.
-
-    Returns:
-        list[tuple] | str: Результат SQL-запроса в виде списка строк либо строка ошибки/отказа.
-    """
-    working_messages = [m.copy() for m in messages]
-
-    # Stage 1: генерация чернового SQL
-    draft_sql = await query_llm(
-        working_messages, model_name, temperature=SQL_TEMPERATURE
-    )
-    draft_sql_clean = normalize_llm_sql_response(draft_sql)
-
-    if is_cannot_answer(draft_sql_clean):
-        return CANNOT_ANSWER
-
-    draft_sql_clean = _validate_or_cannot_answer(draft_sql_clean)
-    if is_cannot_answer(draft_sql_clean):
-        return PROMPT_INJECTION
-
-    formatted_draft = _transpile(draft_sql_clean)
-    working_messages.append({"role": "assistant", "content": formatted_draft})
-    working_messages.append({"role": "user", "content": review_prompt})
-
-    # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = await query_llm(
-        working_messages, model_name, temperature=SQL_TEMPERATURE
-    )
-    reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
-
-    if is_cannot_answer(reviewed_sql_clean):
-        return CANNOT_ANSWER
-
-    reviewed_sql_clean = _validate_or_cannot_answer(reviewed_sql_clean)
-    if is_cannot_answer(reviewed_sql_clean):
-        return PROMPT_INJECTION
-
-    current_query = _transpile(reviewed_sql_clean)
-    max_retries = 3
-
-    # Stage 3: выполнение с циклом исправления (до 3 попыток)
-    for attempt in range(1, max_retries + 1):
-        try:
-            async with engine.connect() as conn:
-                result = await conn.execute(text(current_query))
-            return result.fetchall()
-        except Exception as err:
-            if attempt == max_retries:
-                return f"Ошибка после {max_retries} попыток: {err}"
-
-            error_fix_prompt = (
-                f"Предыдущий SQL-запрос вызвал ошибку выполнения: {err}. "
-                "Исправь SQL-запрос так, чтобы он соответствовал SYSTEM_PROMPT. "
-                "Проверь валидность фильтрации, works.unit при агрегации "
-                "объемов, отсутствие progress.unit и отсутствие даты без "
-                "явного запроса пользователя. Если корректный SQL построить "
-                "нельзя, верни ровно: Невозможно ответить. Верни ровно один "
-                "исправленный SQL-запрос без объяснений, без markdown, без "
-                "комментариев и без лишнего текста."
-            )
-            working_messages.append(
-                {"role": "assistant", "content": current_query}
-            )
-            working_messages.append(
-                {"role": "user", "content": error_fix_prompt}
-            )
-
-            fixed_sql = await query_llm(
-                working_messages, model_name,
-                temperature=SQL_TEMPERATURE,
-            )
-            fixed_sql_clean = normalize_llm_sql_response(fixed_sql)
-
-            if is_cannot_answer(fixed_sql_clean):
-                return CANNOT_ANSWER
-
-            fixed_sql_clean = _validate_or_cannot_answer(fixed_sql_clean)
-            if is_cannot_answer(fixed_sql_clean):
-                return PROMPT_INJECTION
-
-            current_query = _transpile(fixed_sql_clean)
 
 
 async def build_sql_query(
