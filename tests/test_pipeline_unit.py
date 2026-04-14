@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -289,20 +289,18 @@ def test_validate_blocks_multiple_statements():
 # ---------------------------------------------------------------------------
 
 
-def _make_engine_with_rows(rows):
-    """Создаёт mock engine, возвращающий заранее заданные строки результата.
+def _make_async_engine_with_rows(rows):
+    """Создаёт mock async engine, возвращающий заранее заданные строки результата.
 
     Args:
         rows: Последовательность строк, которую должен вернуть fetchall().
 
     Returns:
-        MagicMock: Настроенный mock engine для тестирования SQL-пайплайна.
+        MagicMock: Настроенный mock async engine для тестирования SQL-пайплайна.
     """
     mock_result = MagicMock()
     mock_result.fetchall.return_value = rows
-    mock_conn = MagicMock()
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn = AsyncMock()
     mock_conn.execute.return_value = mock_result
     mock_engine = MagicMock()
     mock_engine.connect.return_value = mock_conn
@@ -314,7 +312,8 @@ MESSAGES = [{"role": "system", "content": "sys"}, {"role": "user", "content": "q
 REVIEW = "Проверь SQL"
 
 
-def test_execute_returns_rows_on_success():
+@pytest.mark.asyncio
+async def test_execute_returns_rows_on_success():
     """Проверяет успешное выполнение пайплайна при корректном SQL и ответе БД.
 
     Args:
@@ -323,13 +322,17 @@ def test_execute_returns_rows_on_success():
     Returns:
         None: Сравнивает фактический результат через assert.
     """
-    engine = _make_engine_with_rows([(1,), (2,)])
-    with patch("src.sql_layer.pipeline.query_llm", return_value=VALID_SQL):
-        result = execute_sql_query(engine, MESSAGES, REVIEW)
+    engine = _make_async_engine_with_rows([(1,), (2,)])
+    with patch(
+        "src.sql_layer.pipeline.query_llm",
+        new=AsyncMock(return_value=VALID_SQL),
+    ):
+        result = await execute_sql_query(engine, MESSAGES, REVIEW)
     assert result == [(1,), (2,)]
 
 
-def test_execute_returns_cannot_answer_on_draft_refusal():
+@pytest.mark.asyncio
+async def test_execute_returns_cannot_answer_on_draft_refusal():
     """Проверяет возврат отказа, если первый ответ модели равен CANNOT_ANSWER.
 
     Args:
@@ -339,12 +342,16 @@ def test_execute_returns_cannot_answer_on_draft_refusal():
         None: Сравнивает фактический результат через assert.
     """
     engine = MagicMock()
-    with patch("src.sql_layer.pipeline.query_llm", return_value=CANNOT_ANSWER):
-        result = execute_sql_query(engine, MESSAGES, REVIEW)
+    with patch(
+        "src.sql_layer.pipeline.query_llm",
+        new=AsyncMock(return_value=CANNOT_ANSWER),
+    ):
+        result = await execute_sql_query(engine, MESSAGES, REVIEW)
     assert result == CANNOT_ANSWER
 
 
-def test_execute_returns_prompt_injection_on_invalid_sql():
+@pytest.mark.asyncio
+async def test_execute_returns_prompt_injection_on_invalid_sql():
     """Проверяет возврат защиты от prompt injection при опасном SQL.
 
     Args:
@@ -355,12 +362,16 @@ def test_execute_returns_prompt_injection_on_invalid_sql():
     """
     engine = MagicMock()
     malicious = "DROP TABLE works"
-    with patch("src.sql_layer.pipeline.query_llm", return_value=malicious):
-        result = execute_sql_query(engine, MESSAGES, REVIEW)
+    with patch(
+        "src.sql_layer.pipeline.query_llm",
+        new=AsyncMock(return_value=malicious),
+    ):
+        result = await execute_sql_query(engine, MESSAGES, REVIEW)
     assert result == PROMPT_INJECTION
 
 
-def test_execute_retries_on_execution_error():
+@pytest.mark.asyncio
+async def test_execute_retries_on_execution_error():
     """Проверяет повторный вызов LLM после ошибки выполнения SQL в БД.
 
     Args:
@@ -371,26 +382,22 @@ def test_execute_retries_on_execution_error():
     """
     rows = [(42,)]
 
-    error_conn = MagicMock()
-    error_conn.__enter__ = MagicMock(return_value=error_conn)
-    error_conn.__exit__ = MagicMock(return_value=False)
-    error_conn.execute.side_effect = [Exception("DB error"), MagicMock()]
+    error_conn = AsyncMock()
+    error_conn.execute.side_effect = Exception("DB error")
 
     success_result = MagicMock()
     success_result.fetchall.return_value = rows
-    ok_conn = MagicMock()
-    ok_conn.__enter__ = MagicMock(return_value=ok_conn)
-    ok_conn.__exit__ = MagicMock(return_value=False)
+    ok_conn = AsyncMock()
     ok_conn.execute.return_value = success_result
 
     engine = MagicMock()
     engine.connect.side_effect = [error_conn, ok_conn]
 
-    llm_calls = [VALID_SQL, VALID_SQL, VALID_SQL]
-    with patch("src.sql_layer.pipeline.query_llm", side_effect=llm_calls) as mock_llm:
-        result = execute_sql_query(engine, MESSAGES, REVIEW)
+    llm_mock = AsyncMock(side_effect=[VALID_SQL, VALID_SQL, VALID_SQL])
+    with patch("src.sql_layer.pipeline.query_llm", new=llm_mock):
+        result = await execute_sql_query(engine, MESSAGES, REVIEW)
 
-    assert mock_llm.call_count == 3
+    assert llm_mock.call_count == 3
     assert result == rows
 
 
@@ -399,7 +406,8 @@ def test_execute_retries_on_execution_error():
 # ---------------------------------------------------------------------------
 
 
-def test_generate_answer_passthrough_string():
+@pytest.mark.asyncio
+async def test_generate_answer_passthrough_string():
     """Проверяет, что строка ошибки или отказа возвращается без изменений.
 
     Args:
@@ -408,11 +416,12 @@ def test_generate_answer_passthrough_string():
     Returns:
         None: Сравнивает результаты через assert.
     """
-    assert generate_answer("q", CANNOT_ANSWER) == CANNOT_ANSWER
-    assert generate_answer("q", "Ошибка: foo") == "Ошибка: foo"
+    assert await generate_answer("q", CANNOT_ANSWER) == CANNOT_ANSWER
+    assert await generate_answer("q", "Ошибка: foo") == "Ошибка: foo"
 
 
-def test_generate_answer_calls_llm_with_rows():
+@pytest.mark.asyncio
+async def test_generate_answer_calls_llm_with_rows():
     """Проверяет вызов LLM при генерации ответа из строк SQL-результата.
 
     Args:
@@ -422,16 +431,18 @@ def test_generate_answer_calls_llm_with_rows():
         None: Проверяет ответ и содержимое промпта через assert.
     """
     rows = [(1, "test")]
-    with patch("src.sql_layer.pipeline.query_llm", return_value="Ответ") as mock_llm:
-        result = generate_answer("Сколько объектов?", rows)
+    llm_mock = AsyncMock(return_value="Ответ")
+    with patch("src.sql_layer.pipeline.query_llm", new=llm_mock):
+        result = await generate_answer("Сколько объектов?", rows)
     assert result == "Ответ"
-    assert mock_llm.call_count == 1
-    prompt_content = mock_llm.call_args[0][0][0]["content"]
+    assert llm_mock.call_count == 1
+    prompt_content = llm_mock.call_args[0][0][0]["content"]
     assert "Сколько объектов?" in prompt_content
     assert "1 строк" in prompt_content
 
 
-def test_generate_answer_caps_at_50_rows():
+@pytest.mark.asyncio
+async def test_generate_answer_caps_at_50_rows():
     """Проверяет ограничение числа строк, попадающих в промпт генерации ответа.
 
     Args:
@@ -441,9 +452,10 @@ def test_generate_answer_caps_at_50_rows():
         None: Проверяет содержимое промпта через assert.
     """
     rows = [(i,) for i in range(100)]
-    with patch("src.sql_layer.pipeline.query_llm", return_value="ok") as mock_llm:
-        generate_answer("q", rows)
-    prompt_content = mock_llm.call_args[0][0][0]["content"]
+    llm_mock = AsyncMock(return_value="ok")
+    with patch("src.sql_layer.pipeline.query_llm", new=llm_mock):
+        await generate_answer("q", rows)
+    prompt_content = llm_mock.call_args[0][0][0]["content"]
     # В промпте должно быть 100 строк как row_count, но только 50 строк данных
     assert "100 строк" in prompt_content
     assert str((50,)) not in prompt_content  # строка 51 не попала

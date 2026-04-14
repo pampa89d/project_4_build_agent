@@ -8,8 +8,8 @@ import json
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from src.sql_layer import REVIEW_PROMPT, build_sql_query
 from src.sql_layer.pipeline import _transpile, validate_safe_sql
@@ -77,7 +77,7 @@ def _get_cached_golden_sql(messages: list[dict]) -> str | None:
         return None
 
 
-def build_sql_query_with_cache(
+async def build_sql_query_with_cache(
     messages: list[dict],
     review_prompt: str = REVIEW_PROMPT,
     model_name: str = "meta-llama/llama-3.3-70b-instruct",
@@ -101,14 +101,14 @@ def build_sql_query_with_cache(
         if cached_sql is not None:
             return cached_sql
 
-    return build_sql_query(messages, review_prompt, model_name)
+    return await build_sql_query(messages, review_prompt, model_name)
 
 
 def get_default_database_url() -> str:
     """Находит тестовую SQLite-базу в папке data/db по шаблону construction*.db.
 
     Returns:
-        str: URL подключения SQLAlchemy к найденной SQLite-базе.
+        str: URL подключения SQLAlchemy (async) к найденной SQLite-базе.
 
     Raises:
         FileNotFoundError: Если база данных не найдена.
@@ -118,28 +118,28 @@ def get_default_database_url() -> str:
         raise FileNotFoundError(
             "В папке data/db не найден файл базы данных по шаблону 'construction*.db'"
         )
-    return f"sqlite:///{db_files[0].resolve()}"
+    return f"sqlite+aiosqlite:///{db_files[0].resolve()}"
 
 
-def execute_sql(engine: Engine, sql: str) -> list[tuple]:
+async def execute_sql(engine: AsyncEngine, sql: str) -> list[tuple]:
     """Выполняет SQL-запрос и возвращает список кортежей с результатами.
 
     Args:
-        engine: SQLAlchemy engine.
+        engine: SQLAlchemy AsyncEngine.
         sql: SQL-запрос для выполнения.
 
     Returns:
         list[tuple]: Строки результата запроса.
     """
-    with engine.connect() as conn:
-        result = conn.execute(text(sql))
+    async with engine.connect() as conn:
+        result = await conn.execute(text(sql))
         return [tuple(row) for row in result.fetchall()]
 
 
-def create_test_engine() -> Engine:
-    """Создаёт SQLAlchemy engine для тестовой базы данных.
+def create_test_engine() -> AsyncEngine:
+    """Создаёт SQLAlchemy AsyncEngine для тестовой базы данных.
 
     Returns:
-        Engine: Подключение к тестовой SQLite-базе.
+        AsyncEngine: Подключение к тестовой SQLite-базе.
     """
-    return create_engine(get_default_database_url())
+    return create_async_engine(get_default_database_url())

@@ -1,5 +1,5 @@
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.sql_layer.schema import build_prompt_values, get_schema_from_db
 
@@ -560,20 +560,22 @@ def build_system_prompt(
     )
 
 
-def build_messages(user_question: str, engine: Engine) -> list[dict]:
+async def build_messages(
+    user_question: str, engine: AsyncEngine
+) -> list[dict]:
     """Собирает сообщения для text-to-SQL пайплайна на основе вопроса и схемы БД.
 
     Args:
         user_question (str): Вопрос пользователя на естественном языке.
-        engine (Engine): SQLAlchemy Engine для подключения к БД.
+        engine (AsyncEngine): SQLAlchemy AsyncEngine для подключения к БД.
 
     Returns:
         list[dict]: Список из двух сообщений: системного промпта
             и пользовательского вопроса.
     """
     inspector = sa_inspect(engine)
-    db_schemas = get_schema_from_db(inspector)
-    prompt_values = build_prompt_values(engine)
+    db_schemas = await get_schema_from_db(inspector)
+    prompt_values = await build_prompt_values(engine)
     system_prompt = build_system_prompt(db_schemas=db_schemas, **prompt_values)
     return [
         {"role": "system", "content": system_prompt},

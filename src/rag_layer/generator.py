@@ -1,17 +1,21 @@
 import os
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 load_dotenv()
-
 
 openrouter_api_key = os.getenv("OPEN_ROUTE_API_KEY")
 if not openrouter_api_key:
     raise ValueError("OPEN_ROUTE_API_KEY environment variable not set.")
 
+async_client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=openrouter_api_key,
+)
 
-def query_llm(query: str):
+
+async def query_llm(query: str) -> str:
     """Отправляет одиночный пользовательский запрос в LLM и возвращает ответ.
 
     Args:
@@ -20,12 +24,7 @@ def query_llm(query: str):
     Returns:
         str: Текстовый ответ модели.
     """
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=openrouter_api_key,
-    )
-
-    completion = client.chat.completions.create(
+    completion = await async_client.chat.completions.create(
         model="meta-llama/llama-3.3-70b-instruct",
         messages=[{"role": "user", "content": query}],
     )

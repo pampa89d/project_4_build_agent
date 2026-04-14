@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 load_dotenv()
 
@@ -9,8 +9,13 @@ openrouter_api_key = os.getenv("OPEN_ROUTE_API_KEY")
 if not openrouter_api_key:
     raise ValueError("OPEN_ROUTE_API_KEY environment variable not set.")
 
+async_client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=openrouter_api_key,
+)
 
-def query_llm(
+
+async def query_llm(
     messages: list[dict], model_name: str, temperature: float = 0.0
 ) -> str:
     """Отправляет список сообщений в LLM и возвращает текст ответа.
@@ -24,15 +29,10 @@ def query_llm(
     Returns:
         str: Текстовое содержимое ответа модели.
     """
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=openrouter_api_key,
-    )
-
     if not messages:
         raise ValueError("LLM messages cannot be empty")
 
-    completion = client.chat.completions.create(
+    completion = await async_client.chat.completions.create(
         model=model_name,
         messages=messages,
         temperature=temperature,
@@ -41,7 +41,7 @@ def query_llm(
     return completion.choices[0].message.content
 
 
-def raw_query_llm(
+async def raw_query_llm(
     messages: list[dict], model_name: str, temperature: float = 0.0
 ) -> str:
     """Отправляет список сообщений в LLM и возвращает сырой объект ответа.
@@ -54,15 +54,10 @@ def raw_query_llm(
     Returns:
         str: Сырой ответ клиента OpenAI без дополнительной постобработки.
     """
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=openrouter_api_key,
-    )
-
     if not messages:
         raise ValueError("LLM messages cannot be empty")
 
-    completion = client.chat.completions.create(
+    completion = await async_client.chat.completions.create(
         model=model_name,
         messages=messages,
         extra_body={

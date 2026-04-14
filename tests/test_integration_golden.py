@@ -25,10 +25,10 @@ GOLDEN_PATH = Path("data/golden_dataset.json")
 
 @pytest.fixture(scope="module")
 def engine():
-    """Создаёт SQLAlchemy engine для интеграционных тестов.
+    """Создаёт SQLAlchemy AsyncEngine для интеграционных тестов.
 
     Returns:
-        object: Подключение к тестовой SQLite-базе.
+        AsyncEngine: Подключение к тестовой SQLite-базе.
     """
     return create_test_engine()
 
@@ -39,7 +39,8 @@ def engine():
     json.loads(GOLDEN_PATH.read_text(encoding="utf-8")),
     ids=[item["id"] for item in json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))],
 )
-def test_sql_result_matches_golden(item, engine, request):
+@pytest.mark.asyncio
+async def test_sql_result_matches_golden(item, engine, request):
     """Проверяет совпадение результатов SQL пайплайна с эталонным SQL.
 
     Критерии:
@@ -54,16 +55,16 @@ def test_sql_result_matches_golden(item, engine, request):
     Returns:
         None: Сравнивает результаты запросов через assert.
     """
-    messages = build_messages(item["question"], engine)
-    actual_sql = build_sql_query_with_cache(messages)
+    messages = await build_messages(item["question"], engine)
+    actual_sql = await build_sql_query_with_cache(messages)
 
     assert actual_sql not in {
         "Невозможно ответить",
         "Запрещенный SQL-запрос, невозможно ответить",
     }, f"{item['id']}: pipeline вернул отказ вместо SQL: {actual_sql}"
 
-    actual_rows = execute_sql(engine, actual_sql)
-    golden_rows = execute_sql(engine, item["golden_sql"])
+    actual_rows = await execute_sql(engine, actual_sql)
+    golden_rows = await execute_sql(engine, item["golden_sql"])
 
     # Критерий 1: совпадение количества строк
     assert len(actual_rows) == len(golden_rows), (

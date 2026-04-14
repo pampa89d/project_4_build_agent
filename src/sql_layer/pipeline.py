@@ -1,7 +1,7 @@
 import re
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 import sqlglot
 from sqlglot import exp
 
@@ -174,8 +174,8 @@ def _transpile(sql: str) -> str:
     return sqlglot.transpile(sql, read="sqlite", write="sqlite", pretty=True)[0]
 
 
-def execute_sql_query(
-    engine: Engine,
+async def execute_sql_query(
+    engine: AsyncEngine,
     messages: list[dict],
     review_prompt: str,
     model_name: str = DEFAULT_MODEL,
@@ -183,7 +183,7 @@ def execute_sql_query(
     """Генерирует, проверяет, при необходимости исправляет и выполняет SQL-запрос.
 
     Args:
-        engine (Engine): SQLAlchemy engine для выполнения запросов.
+        engine (AsyncEngine): SQLAlchemy AsyncEngine для выполнения запросов.
         messages (list[dict]): Список сообщений вида {role, content}. Исходный список не мутируется.
         review_prompt (str): Промпт для второго прохода LLM-проверки SQL.
         model_name (str): Идентификатор модели на OpenRouter.
@@ -194,7 +194,7 @@ def execute_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    draft_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    draft_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
     if is_cannot_answer(draft_sql_clean):
@@ -209,7 +209,7 @@ def execute_sql_query(
     working_messages.append({"role": "user", "content": review_prompt})
 
     # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    reviewed_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
     if is_cannot_answer(reviewed_sql_clean):
@@ -223,8 +223,8 @@ def execute_sql_query(
 
     # Stage 3: выполнение
     try:
-        with engine.connect() as conn:
-            result = conn.execute(text(allowed_query))
+        async with engine.connect() as conn:
+            result = await conn.execute(text(allowed_query))
         return result.fetchall()
     except Exception as err:
         error_fix_prompt = (
@@ -239,7 +239,7 @@ def execute_sql_query(
         working_messages.append({"role": "assistant", "content": allowed_query})
         working_messages.append({"role": "user", "content": error_fix_prompt})
 
-        fixed_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+        fixed_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
         fixed_sql_clean = normalize_llm_sql_response(fixed_sql)
 
         if is_cannot_answer(fixed_sql_clean):
@@ -251,8 +251,8 @@ def execute_sql_query(
 
         try:
             fixed_query = _transpile(fixed_sql_clean)
-            with engine.connect() as conn:
-                result = conn.execute(text(fixed_query))
+            async with engine.connect() as conn:
+                result = await conn.execute(text(fixed_query))
             return result.fetchall()
         except Exception as fix_err:
             return f"Ошибка после попытки исправления: {fix_err}"
@@ -266,7 +266,7 @@ _ANSWER_PROMPT_TEMPLATE = (
 )
 
 
-def build_sql_query(
+async def build_sql_query(
     messages: list[dict],
     review_prompt: str,
     model_name: str = DEFAULT_MODEL,
@@ -288,7 +288,7 @@ def build_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    draft_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    draft_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
     if is_cannot_answer(draft_sql_clean):
@@ -303,7 +303,7 @@ def build_sql_query(
     working_messages.append({"role": "user", "content": review_prompt})
 
     # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    reviewed_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
     if is_cannot_answer(reviewed_sql_clean):
@@ -324,7 +324,7 @@ _ANSWER_PROMPT_TEMPLATE = (
 )
 
 
-def generate_answer(
+async def generate_answer(
     question: str,
     sql_result: list[tuple] | str,
     model_name: str = DEFAULT_MODEL,
@@ -350,4 +350,4 @@ def generate_answer(
         rows_text=rows_text,
     )
     messages = [{"role": "user", "content": prompt}]
-    return query_llm(messages, model_name, temperature=SQL_TEMPERATURE)
+    return await query_llm(messages, model_name, temperature=SQL_TEMPERATURE)

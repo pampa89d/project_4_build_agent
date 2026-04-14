@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.api.dependencies import get_engine
 from src.api.schemas import ChatRequest, ChatResponse, HealthResponse
@@ -12,19 +12,23 @@ router = APIRouter()
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, engine: Engine = Depends(get_engine)):
+async def chat(
+    request: ChatRequest, engine: AsyncEngine = Depends(get_engine)
+):
     """Обрабатывает пользовательский вопрос и возвращает текстовый ответ агента.
 
     Args:
         request (ChatRequest): Тело запроса с вопросом пользователя и именем модели.
-        engine (Engine): Подключение к БД, передаваемое через dependency injection.
+        engine (AsyncEngine): Подключение к БД, передаваемое через dependency injection.
 
     Returns:
         ChatResponse: Ответ API со статусом обработки и количеством найденных строк.
     """
-    messages = build_messages(request.question, engine)
-    sql_result = execute_sql_query(engine, messages, REVIEW_PROMPT, request.model_name)
-    answer = generate_answer(request.question, sql_result, request.model_name)
+    messages = await build_messages(request.question, engine)
+    sql_result = await execute_sql_query(
+        engine, messages, REVIEW_PROMPT, request.model_name
+    )
+    answer = await generate_answer(request.question, sql_result, request.model_name)
 
     if isinstance(sql_result, list):
         return ChatResponse(
@@ -38,18 +42,18 @@ def chat(request: ChatRequest, engine: Engine = Depends(get_engine)):
 
 
 @router.get("/health", response_model=HealthResponse)
-def health(engine: Engine = Depends(get_engine)):
+async def health(engine: AsyncEngine = Depends(get_engine)):
     """Проверяет доступность API и возможность подключения к базе данных.
 
     Args:
-        engine (Engine): Подключение к БД, передаваемое через dependency injection.
+        engine (AsyncEngine): Подключение к БД, передаваемое через dependency injection.
 
     Returns:
         HealthResponse: Результат health check со статусом и признаком доступности БД.
     """
     try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
         db_reachable = True
     except Exception:
         db_reachable = False
