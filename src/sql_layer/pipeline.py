@@ -44,6 +44,14 @@ DISALLOWED_TABLE_NAMES = {
     "sqlite_master",
 }
 
+_ANSWER_PROMPT_TEMPLATE = (
+    "Пользователь спросил: {question}\n\n"
+    "Результат SQL-запроса ({row_count} строк):\n{rows_text}\n\n"
+    "Сформулируй краткий и понятный ответ на русском языке.\n"
+    "Не упоминай SQL. Только факты из данных."
+)
+
+
 def strip_markdown_sql(response: str | None) -> str:
     """Извлекает SQL из ответа модели, удаляя markdown-обёртки.
 
@@ -194,7 +202,9 @@ async def execute_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    draft_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    draft_sql = await query_llm(
+        working_messages, model_name, temperature=SQL_TEMPERATURE
+    )
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
     if is_cannot_answer(draft_sql_clean):
@@ -209,7 +219,9 @@ async def execute_sql_query(
     working_messages.append({"role": "user", "content": review_prompt})
 
     # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    reviewed_sql = await query_llm(
+        working_messages, model_name, temperature=SQL_TEMPERATURE
+    )
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
     if is_cannot_answer(reviewed_sql_clean):
@@ -219,51 +231,50 @@ async def execute_sql_query(
     if is_cannot_answer(reviewed_sql_clean):
         return PROMPT_INJECTION
 
-    allowed_query = _transpile(reviewed_sql_clean)
+    current_query = _transpile(reviewed_sql_clean)
+    max_retries = 3
 
-    # Stage 3: выполнение
-    try:
-        async with engine.connect() as conn:
-            result = await conn.execute(text(allowed_query))
-        return result.fetchall()
-    except Exception as err:
-        error_fix_prompt = (
-            f"Предыдущий SQL-запрос вызвал ошибку выполнения: {err}. "
-            "Исправь SQL-запрос так, чтобы он соответствовал SYSTEM_PROMPT. "
-            "Проверь валидность фильтрации, works.unit при агрегации объемов, "
-            "отсутствие progress.unit и отсутствие даты без явного запроса "
-            "пользователя. Если корректный SQL построить нельзя, верни ровно: "
-            "Невозможно ответить. Верни ровно один исправленный SQL-запрос без "
-            "объяснений, без markdown, без комментариев и без лишнего текста."
-        )
-        working_messages.append({"role": "assistant", "content": allowed_query})
-        working_messages.append({"role": "user", "content": error_fix_prompt})
-
-        fixed_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
-        fixed_sql_clean = normalize_llm_sql_response(fixed_sql)
-
-        if is_cannot_answer(fixed_sql_clean):
-            return CANNOT_ANSWER
-
-        fixed_sql_clean = _validate_or_cannot_answer(fixed_sql_clean)
-        if is_cannot_answer(fixed_sql_clean):
-            return PROMPT_INJECTION
-
+    # Stage 3: выполнение с циклом исправления (до 3 попыток)
+    for attempt in range(1, max_retries + 1):
         try:
-            fixed_query = _transpile(fixed_sql_clean)
             async with engine.connect() as conn:
-                result = await conn.execute(text(fixed_query))
+                result = await conn.execute(text(current_query))
             return result.fetchall()
-        except Exception as fix_err:
-            return f"Ошибка после попытки исправления: {fix_err}"
+        except Exception as err:
+            if attempt == max_retries:
+                return f"Ошибка после {max_retries} попыток: {err}"
 
+            error_fix_prompt = (
+                f"Предыдущий SQL-запрос вызвал ошибку выполнения: {err}. "
+                "Исправь SQL-запрос так, чтобы он соответствовал SYSTEM_PROMPT. "
+                "Проверь валидность фильтрации, works.unit при агрегации "
+                "объемов, отсутствие progress.unit и отсутствие даты без "
+                "явного запроса пользователя. Если корректный SQL построить "
+                "нельзя, верни ровно: Невозможно ответить. Верни ровно один "
+                "исправленный SQL-запрос без объяснений, без markdown, без "
+                "комментариев и без лишнего текста."
+            )
+            working_messages.append(
+                {"role": "assistant", "content": current_query}
+            )
+            working_messages.append(
+                {"role": "user", "content": error_fix_prompt}
+            )
 
-_ANSWER_PROMPT_TEMPLATE = (
-    "Пользователь спросил: {question}\n\n"
-    "Результат SQL-запроса ({row_count} строк):\n{rows_text}\n\n"
-    "Сформулируй краткий и понятный ответ на русском языке.\n"
-    "Не упоминай SQL. Только факты из данных."
-)
+            fixed_sql = await query_llm(
+                working_messages, model_name,
+                temperature=SQL_TEMPERATURE,
+            )
+            fixed_sql_clean = normalize_llm_sql_response(fixed_sql)
+
+            if is_cannot_answer(fixed_sql_clean):
+                return CANNOT_ANSWER
+
+            fixed_sql_clean = _validate_or_cannot_answer(fixed_sql_clean)
+            if is_cannot_answer(fixed_sql_clean):
+                return PROMPT_INJECTION
+
+            current_query = _transpile(fixed_sql_clean)
 
 
 async def build_sql_query(
@@ -288,7 +299,9 @@ async def build_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    draft_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    draft_sql = await query_llm(
+        working_messages, model_name, temperature=SQL_TEMPERATURE
+    )
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
     if is_cannot_answer(draft_sql_clean):
@@ -303,7 +316,9 @@ async def build_sql_query(
     working_messages.append({"role": "user", "content": review_prompt})
 
     # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = await query_llm(working_messages, model_name, temperature=SQL_TEMPERATURE)
+    reviewed_sql = await query_llm(
+        working_messages, model_name, temperature=SQL_TEMPERATURE
+    )
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
     if is_cannot_answer(reviewed_sql_clean):
@@ -314,14 +329,6 @@ async def build_sql_query(
         return PROMPT_INJECTION
 
     return _transpile(reviewed_sql_clean)
-
-
-_ANSWER_PROMPT_TEMPLATE = (
-    "Пользователь спросил: {question}\n\n"
-    "Результат SQL-запроса ({row_count} строк):\n{rows_text}\n\n"
-    "Сформулируй краткий и понятный ответ на русском языке.\n"
-    "Не упоминай SQL. Только факты из данных."
-)
 
 
 async def generate_answer(
