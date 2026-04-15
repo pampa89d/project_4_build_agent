@@ -33,7 +33,7 @@ async def query_llm(
         raise ValueError("LLM messages cannot be empty")
 
     if not tools:
-        tools = None
+        tools = []
 
     completion = await async_client.chat.completions.create(
         model=model_name,
@@ -62,7 +62,7 @@ async def raw_query_llm(
         raise ValueError("LLM messages cannot be empty")
 
     if not tools:
-        tools = None
+        tools = []
 
     completion = await async_client.chat.completions.create(
         model=model_name,
