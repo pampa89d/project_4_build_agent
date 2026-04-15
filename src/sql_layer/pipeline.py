@@ -1,9 +1,14 @@
 import re
+from typing import TYPE_CHECKING
 
 import sqlglot
 from sqlglot import exp
 
 from src.agent.llm_client import query_llm
+from src.sql_layer.prompts import REVIEW_PROMPT
+
+if TYPE_CHECKING:
+    pass
 
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
 SQL_TEMPERATURE = 0.0
@@ -41,13 +46,6 @@ DISALLOWED_SQL_KEYWORDS = (
 DISALLOWED_TABLE_NAMES = {
     "sqlite_master",
 }
-
-_ANSWER_PROMPT_TEMPLATE = (
-    "Пользователь спросил: {question}\n\n"
-    "Результат SQL-запроса ({row_count} строк):\n{rows_text}\n\n"
-    "Сформулируй краткий и понятный ответ на русском языке.\n"
-    "Не упоминай SQL. Только факты из данных."
-)
 
 
 def strip_markdown_sql(response: str | None) -> str:
@@ -203,7 +201,7 @@ async def build_sql_query(
 
     # Stage 1: генерация чернового SQL
     draft_sql = await query_llm(
-        working_messages, model_name, temperature=SQL_TEMPERATURE
+        working_messages, model_name, tools=[], temperature=SQL_TEMPERATURE
     )
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
 
@@ -220,7 +218,7 @@ async def build_sql_query(
 
     # Stage 2: review — LLM проверяет и исправляет SQL
     reviewed_sql = await query_llm(
-        working_messages, model_name, temperature=SQL_TEMPERATURE
+        working_messages, model_name, tools=[], temperature=SQL_TEMPERATURE
     )
     reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
@@ -234,30 +232,54 @@ async def build_sql_query(
     return _transpile(reviewed_sql_clean)
 
 
-async def generate_answer(
-    question: str,
-    sql_result: list[tuple] | str,
+async def main(
+    messages: list[str],
     model_name: str = DEFAULT_MODEL,
-) -> str:
-    """Синтезирует ответ на естественном языке из результата SQL-запроса.
+) -> dict:
+    """Обрабатывает сырой SQL запрос и возвращает ошибку или валидный SQL запрос.
+
+    Последовательно вызывает функции модуля:
+    1. build_sql_query — генерация SQL (draft + review)
+    2. validate_safe_sql — проверка финального SQL
 
     Args:
-        question (str): Исходный вопрос пользователя.
-        sql_result (list[tuple] | str): Результат SQL-запроса —
-            список строк или строка с ошибкой/отказом.
-        model_name (str): Идентификатор модели на OpenRouter.
+        messages: Список сообщений из промпта и запросов в модель.
+        model_name: Идентификатор модели на OpenRouter.
 
     Returns:
-        str: Ответ на естественном языке либо исходная строка ошибки/отказа.
+        dict с ключами:
+            - sql (str): Итоговый SQL-запрос.
+            - rows (list[tuple] | None): Результат выполнения SQL.
+            - answer (str): Ответ на естественном языке.
+            - status (str): "ok" | "cannot_answer" | "error".
     """
-    if isinstance(sql_result, str):
-        return sql_result
 
-    rows_text = "\n".join(str(row) for row in sql_result[:50])
-    prompt = _ANSWER_PROMPT_TEMPLATE.format(
-        question=question,
-        row_count=len(sql_result),
-        rows_text=rows_text,
-    )
-    messages = [{"role": "user", "content": prompt}]
-    return await query_llm(messages, model_name, temperature=SQL_TEMPERATURE)
+    # 1. Генерация SQL (draft + review)
+    sql = await build_sql_query(messages, REVIEW_PROMPT, model_name)
+
+    # Отказ или инъекция вернуть sql и статус
+    if sql in REFUSAL_RESPONSES:
+        return {
+            "sql": sql,
+            "rows": None,
+            "answer": CANNOT_ANSWER,
+            "status": "cannot_answer",
+        }
+
+    # 2. Валидация безопасности
+    try:
+        validate_safe_sql(sql)
+    except ValueError:
+        return {
+            "sql": sql,
+            "rows": None,
+            "answer": PROMPT_INJECTION,
+            "status": "error",
+        }
+
+    return {
+        "sql": sql,
+        "rows": None,
+        "answer": None,
+        "status": "ok",
+    }
