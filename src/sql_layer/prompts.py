@@ -559,9 +559,7 @@ def build_system_prompt(
     )
 
 
-async def build_messages(
-    user_question: str, engine: AsyncEngine
-) -> list[dict]:
+async def build_messages(user_question: str, engine: AsyncEngine) -> list[dict]:
     """Собирает сообщения для text-to-SQL пайплайна на основе вопроса и схемы БД.
 
     Args:
