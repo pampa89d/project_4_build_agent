@@ -16,7 +16,7 @@ async_client = AsyncOpenAI(
 
 
 async def query_llm(
-    messages: list[dict], model_name: str, temperature: float = 0.0
+    messages: list[dict], model_name: str, tools: list, temperature: float = 0.0
 ) -> str:
     """Отправляет список сообщений в LLM и возвращает текст ответа.
 
@@ -32,9 +32,13 @@ async def query_llm(
     if not messages:
         raise ValueError("LLM messages cannot be empty")
 
+    if not tools:
+        tools = None
+
     completion = await async_client.chat.completions.create(
         model=model_name,
         messages=messages,
+        tools=tools,
         temperature=temperature,
     )
 
@@ -42,7 +46,7 @@ async def query_llm(
 
 
 async def raw_query_llm(
-    messages: list[dict], model_name: str, temperature: float = 0.0
+    messages: list[dict], model_name: str, tools: list, temperature: float = 0.0
 ) -> str:
     """Отправляет список сообщений в LLM и возвращает сырой объект ответа.
 
@@ -57,9 +61,13 @@ async def raw_query_llm(
     if not messages:
         raise ValueError("LLM messages cannot be empty")
 
+    if not tools:
+        tools = None
+
     completion = await async_client.chat.completions.create(
         model=model_name,
         messages=messages,
+        tools=tools,
         extra_body={
             "provider": {
                 "sort": "price",
