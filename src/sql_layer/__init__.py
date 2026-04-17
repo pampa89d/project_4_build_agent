@@ -4,7 +4,6 @@ from .pipeline import (
     PROMPT_INJECTION,
     SQL_TEMPERATURE,
     build_sql_query,
-    generate_answer,
     is_cannot_answer,
     normalize_llm_sql_response,
     validate_safe_sql,
@@ -14,7 +13,6 @@ from .schema import build_prompt_values, get_schema_from_db
 
 __all__ = [
     "build_sql_query",
-    "generate_answer",
     "DEFAULT_MODEL",
     "SQL_TEMPERATURE",
     "CANNOT_ANSWER",
