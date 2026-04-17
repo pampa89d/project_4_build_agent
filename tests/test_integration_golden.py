@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 
 from src.sql_layer.prompts import build_messages
-from tests.helpers import build_sql_query_with_cache, create_test_engine, execute_sql
+from src.sql_layer import REVIEW_PROMPT, build_sql_query
+from tests.helpers import create_test_engine, execute_sql
 
 GOLDEN_PATH = Path("data/golden_dataset.json")
 
@@ -56,7 +57,7 @@ async def test_sql_result_matches_golden(item, engine, request):
         None: Сравнивает результаты запросов через assert.
     """
     messages = await build_messages(item["question"], engine)
-    actual_sql = await build_sql_query_with_cache(messages)
+    actual_sql = await build_sql_query(messages, REVIEW_PROMPT)
 
     assert actual_sql not in {
         "Невозможно ответить",
