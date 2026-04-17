@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from src.sql_layer.prompts import build_messages
 from src.sql_layer import REVIEW_PROMPT, build_sql_query
+from src.sql_layer.prompts import build_messages
 from tests.helpers import create_test_engine, execute_sql
 
 GOLDEN_PATH = Path("data/golden_dataset.json")
@@ -34,6 +34,8 @@ def engine():
     return create_test_engine()
 
 
+# тесты с маркером @pytest.mark.integration пропускаются по умолчанию
+# и запускаются только с флагом "--run-integration"
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "item",
