@@ -21,7 +21,6 @@ from src.sql_layer.pipeline import (
     PROMPT_INJECTION,
     DEFAULT_MODEL,
     SQL_TEMPERATURE,
-    generate_answer,
     normalize_llm_sql_response,
     is_cannot_answer,
     validate_safe_sql,
