@@ -166,7 +166,7 @@ def _validate_or_cannot_answer(sql: str) -> str:
         return PROMPT_INJECTION
 
 
-def _transpile(sql: str) -> str:
+def _sqlglot_transpile(sql: str) -> str:
     """Нормализует формат SQL-запроса средствами sqlglot.
 
     Args:
@@ -182,6 +182,7 @@ async def build_sql_query(
     messages: list[dict],
     review_prompt: str,
     model_name: str = DEFAULT_MODEL,
+    need_llm_review: bool = False,
 ) -> str:
     """Генерирует и проверяет SQL-запрос без выполнения в БД.
 
@@ -212,24 +213,29 @@ async def build_sql_query(
     if is_cannot_answer(draft_sql_clean):
         return PROMPT_INJECTION
 
-    formatted_draft = _transpile(draft_sql_clean)
-    working_messages.append({"role": "assistant", "content": formatted_draft})
-    working_messages.append({"role": "user", "content": review_prompt})
+    if not need_llm_review:
+        return _sqlglot_transpile(draft_sql_clean)
+    else:
+        # Stage 2: review — LLM проверяет и исправляет SQL,
+        # это дополнительная проверка с помощью LLM,
+        # требует доп.запроса, включить при необходимости
+        formatted_draft = _sqlglot_transpile(draft_sql_clean)
+        working_messages.append({"role": "assistant", "content": formatted_draft})
+        working_messages.append({"role": "user", "content": review_prompt})
 
-    # Stage 2: review — LLM проверяет и исправляет SQL
-    reviewed_sql = await query_llm(
-        working_messages, model_name, tools=[], temperature=SQL_TEMPERATURE
-    )
-    reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
+        reviewed_sql = await query_llm(
+            working_messages, model_name, tools=[], temperature=SQL_TEMPERATURE
+        )
+        reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
-    if is_cannot_answer(reviewed_sql_clean):
-        return CANNOT_ANSWER
+        if is_cannot_answer(reviewed_sql_clean):
+            return CANNOT_ANSWER
 
-    reviewed_sql_clean = _validate_or_cannot_answer(reviewed_sql_clean)
-    if is_cannot_answer(reviewed_sql_clean):
-        return PROMPT_INJECTION
+        reviewed_sql_clean = _validate_or_cannot_answer(reviewed_sql_clean)
+        if is_cannot_answer(reviewed_sql_clean):
+            return PROMPT_INJECTION
 
-    return _transpile(reviewed_sql_clean)
+        return _sqlglot_transpile(reviewed_sql_clean)
 
 
 async def main(
@@ -255,7 +261,9 @@ async def main(
     """
 
     # 1. Генерация SQL (draft + review)
-    sql = await build_sql_query(messages, REVIEW_PROMPT, model_name)
+    sql = await build_sql_query(
+        messages, REVIEW_PROMPT, model_name, need_llm_review=True
+    )
 
     # Отказ или инъекция вернуть sql и статус
     if sql in REFUSAL_RESPONSES:
