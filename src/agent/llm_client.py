@@ -16,7 +16,7 @@ async_client = AsyncOpenAI(
 
 
 async def query_llm(
-    messages: list[dict], model_name: str, tools: list, temperature: float = 0.0
+    messages: list[dict], model_name: str, tools: list = None, temperature: float = 0.0
 ) -> str:
     """Отправляет список сообщений в LLM и возвращает текст ответа.
 
@@ -46,7 +46,7 @@ async def query_llm(
 
 
 async def raw_query_llm(
-    messages: list[dict], model_name: str, tools: list, temperature: float = 0.0
+    messages: list[dict], model_name: str, tools: list = None, temperature: float = 0.0
 ) -> str:
     """Отправляет список сообщений в LLM и возвращает сырой объект ответа.
 
