@@ -85,7 +85,7 @@ def test_system_prompt_has_base_table_column_rule():
     """
     result = build_system_prompt(db_schemas=FAKE_SCHEMAS, **FAKE_VALUES)
 
-    assert "Если пользователь НЕ указал конкретные колонки" in result
+    assert "Если пользователь не указал колонки явно" in result
 
 
 def test_system_prompt_has_aggregate_alias_rule():
