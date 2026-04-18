@@ -17,7 +17,7 @@
     {
         "id": "query_4",
         "question": "Покажи все индивидуальные строки (БЕЗ агрегации) по работам типа 'Кровельные работы' для всех объектов в Екатеринбурге.\nРезультат должен содержать: название объекта, подрядчика, единицу измерения, плановый объем и фактический объем каждой работы.\nНЕ агрегируй, показывай каждую работу отдельной строкой.",
-        "golden_sql": "SELECT T2.name, T3.name, T1.work_type, T1.unit, ROUND(T4.plan_vol, 2) AS plan_vol, ROUND(T4.fact_vol, 2) AS fact_vol\nFROM works AS T1\nLEFT JOIN objects AS T2 ON T1.object_id = T2.id\nLEFT JOIN contractors AS T3 ON T1.id = T3.work_id\nLEFT JOIN progress AS T4 ON T1.id = T4.work_id\nWHERE T1.work_type = 'Кровельные работы'\n  AND T2.city = 'Екатеринбург'\nORDER BY T2.name ASC, T3.name ASC, T1.work_type ASC, T1.unit ASC"
+        "golden_sql": "SELECT T2.city, T2.name, T3.name, T1.work_type, T1.unit, ROUND(T4.plan_vol, 2) AS plan_vol, ROUND(T4.fact_vol, 2) AS fact_vol\nFROM works AS T1\nLEFT JOIN objects AS T2 ON T1.object_id = T2.id\nLEFT JOIN contractors AS T3 ON T1.id = T3.work_id\nLEFT JOIN progress AS T4 ON T1.id = T4.work_id\nWHERE T1.work_type = 'Кровельные работы'\n  AND T2.city = 'Екатеринбург'\nORDER BY T2.city ASC, T2.name ASC, T3.name ASC, T1.work_type ASC, T1.unit ASC"
     },
     {
         "id": "query_5",
