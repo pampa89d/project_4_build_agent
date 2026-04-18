@@ -1,4 +1,4 @@
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
@@ -21,9 +21,7 @@ async def get_schema_from_db(engine: AsyncEngine) -> dict[str, str]:
         table_names = [row[0] for row in tables_result.fetchall()]
 
         for table_name in table_names:
-            cols_result = await conn.execute(
-                text(f"PRAGMA table_info('{table_name}')")
-            )
+            cols_result = await conn.execute(text(f"PRAGMA table_info('{table_name}')"))
             columns = [row[1] for row in cols_result.fetchall()]
 
             fks_result = await conn.execute(
@@ -32,9 +30,7 @@ async def get_schema_from_db(engine: AsyncEngine) -> dict[str, str]:
             for fk_row in fks_result.fetchall():
                 col_name = fk_row[3]
                 ref_table = fk_row[2]
-                columns.append(
-                    f"{col_name} (foreign key to table '{ref_table}')"
-                )
+                columns.append(f"{col_name} (foreign key to table '{ref_table}')")
 
             schema_parts[table_name] = ", ".join(columns)
 
@@ -65,19 +61,19 @@ async def build_prompt_values(engine: AsyncEngine) -> dict[str, str]:
         work_types_unit = [f"{row[0]} - {row[1]}" for row in work_type_unit_rows]
 
         result = await conn.execute(
+            text("SELECT DISTINCT city FROM objects ORDER BY city")
+        )
+        city = [row[0] for row in result.fetchall()]
+
+        result = await conn.execute(
             text("SELECT DISTINCT name FROM objects ORDER BY name")
         )
         objects = [row[0] for row in result.fetchall()]
-
-        result = await conn.execute(
-            text("SELECT DISTINCT city FROM objects ORDER BY city")
-        )
-        cities = [row[0] for row in result.fetchall()]
 
     return {
         "contractors_str": ", ".join(contractors),
         "exact_work_types_str": ", ".join(exact_work_types),
         "work_types_str": "\n".join(work_types_unit),
+        "cities_str": ", ".join(city),
         "objects_str": ", ".join(objects),
-        "cities_str": ", ".join(cities),
     }
