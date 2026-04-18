@@ -40,8 +40,8 @@ progress.work_id   = works.id
 Подрядчики: {contractors_str}
 Точные типы работ для works.work_type: {exact_work_types_str}
 Типы работ и единицы измерения: {work_types_str}
-Объекты: {objects_str}
 Города: {cities_str}
+Объекты: {objects_str}
  
  
 ФОРМАТ ОТВЕТА
