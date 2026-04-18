@@ -12,7 +12,9 @@ if TYPE_CHECKING:
 
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
 SQL_TEMPERATURE = 0.0
+
 CANNOT_ANSWER = "Невозможно ответить"
+ERROR_ANSWER = "Ошибка"
 PROMPT_INJECTION = "Запрещенный SQL-запрос, невозможно ответить"
 REFUSAL_RESPONSES = {
     CANNOT_ANSWER,
@@ -95,16 +97,14 @@ def normalize_llm_sql_response(response: str | None) -> str:
 
     if is_cannot_answer(cleaned):
         normalized = cleaned.strip().rstrip(" .!?").strip()
-        return normalized
+        if normalized == PROMPT_INJECTION:
+            return PROMPT_INJECTION
+        return CANNOT_ANSWER
 
     # Ищем первое вхождение SQL, чтобы отрезать возможные пояснения модели.
     sql_match = re.search(r"(?is)\b(WITH|SELECT)\b.*", cleaned)
     if sql_match:
         return sql_match.group(0).strip()
-
-    for refusal_response in REFUSAL_RESPONSES:
-        if refusal_response in cleaned:
-            return refusal_response
 
     return cleaned
 
@@ -162,8 +162,10 @@ def _validate_or_cannot_answer(sql: str) -> str:
     """
     try:
         return validate_safe_sql(sql)
-    except Exception:
+    except ValueError:
         return PROMPT_INJECTION
+    except Exception as err:
+        return ERROR_ANSWER + " " + str(err)
 
 
 def _sqlglot_transpile(sql: str) -> str:
@@ -175,14 +177,17 @@ def _sqlglot_transpile(sql: str) -> str:
     Returns:
         str: Отформатированный SQL-запрос.
     """
-    return sqlglot.transpile(sql, read="sqlite", write="sqlite", pretty=True)[0]
+    try:
+        return sqlglot.transpile(sql, read="sqlite", write="sqlite", pretty=True)[0]
+    except Exception:
+        return CANNOT_ANSWER
 
 
 async def build_sql_query(
     messages: list[dict],
     review_prompt: str,
     model_name: str = DEFAULT_MODEL,
-    need_llm_review: bool = False,
+    need_llm_review: bool = True,
 ) -> str:
     """Генерирует и проверяет SQL-запрос без выполнения в БД.
 
@@ -202,16 +207,15 @@ async def build_sql_query(
 
     # Stage 1: генерация чернового SQL
     draft_sql = await query_llm(
-        working_messages, model_name, tools=[], temperature=SQL_TEMPERATURE
+        messages=working_messages, model_name=model_name, temperature=SQL_TEMPERATURE
     )
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
-
-    if is_cannot_answer(draft_sql_clean):
-        return CANNOT_ANSWER
+    if draft_sql_clean in REFUSAL_RESPONSES:
+        return draft_sql_clean
 
     draft_sql_clean = _validate_or_cannot_answer(draft_sql_clean)
-    if is_cannot_answer(draft_sql_clean):
-        return PROMPT_INJECTION
+    if draft_sql_clean in REFUSAL_RESPONSES:
+        return draft_sql_clean
 
     if not need_llm_review:
         return _sqlglot_transpile(draft_sql_clean)
@@ -224,22 +228,24 @@ async def build_sql_query(
         working_messages.append({"role": "user", "content": review_prompt})
 
         reviewed_sql = await query_llm(
-            working_messages, model_name, tools=[], temperature=SQL_TEMPERATURE
+            messages=working_messages,
+            model_name=model_name,
+            temperature=SQL_TEMPERATURE,
         )
         reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
 
-        if is_cannot_answer(reviewed_sql_clean):
-            return CANNOT_ANSWER
+        if reviewed_sql_clean in REFUSAL_RESPONSES:
+            return reviewed_sql_clean
 
         reviewed_sql_clean = _validate_or_cannot_answer(reviewed_sql_clean)
-        if is_cannot_answer(reviewed_sql_clean):
-            return PROMPT_INJECTION
+        if reviewed_sql_clean in REFUSAL_RESPONSES:
+            return reviewed_sql_clean
 
         return _sqlglot_transpile(reviewed_sql_clean)
 
 
 async def main(
-    messages: list[str],
+    messages: list[dict],
     model_name: str = DEFAULT_MODEL,
 ) -> dict:
     """Обрабатывает сырой SQL запрос и возвращает ошибку или валидный SQL запрос.
@@ -249,8 +255,8 @@ async def main(
     2. validate_safe_sql — проверка финального SQL
 
     Args:
-        messages: Список сообщений из промпта и запросов в модель.
-        model_name: Идентификатор модели на OpenRouter.
+        messages (list[dict]): Список сообщений из промпта и запросов в модель.
+        model_name (str): Идентификатор модели на OpenRouter.
 
     Returns:
         dict с ключами:
@@ -260,28 +266,29 @@ async def main(
             - status (str): "ok" | "cannot_answer" | "error".
     """
 
-    # 1. Генерация SQL (draft + review)
-    sql = await build_sql_query(
-        messages, REVIEW_PROMPT, model_name, need_llm_review=True
-    )
+    # Генерация SQL (draft + review)
+    sql = await build_sql_query(messages, REVIEW_PROMPT, model_name)
 
-    # Отказ или инъекция вернуть sql и статус
-    if sql in REFUSAL_RESPONSES:
+    # Отказ, инъекция или ошибка валидации
+    if sql == CANNOT_ANSWER:
         return {
-            "sql": sql,
+            "sql": None,
             "rows": None,
             "answer": CANNOT_ANSWER,
             "status": "cannot_answer",
         }
-
-    # 2. Валидация безопасности
-    try:
-        validate_safe_sql(sql)
-    except ValueError:
+    if sql == PROMPT_INJECTION:
         return {
-            "sql": sql,
+            "sql": None,
             "rows": None,
             "answer": PROMPT_INJECTION,
+            "status": "error",
+        }
+    if sql.startswith(ERROR_ANSWER):
+        return {
+            "sql": None,
+            "rows": None,
+            "answer": sql,
             "status": "error",
         }
 
