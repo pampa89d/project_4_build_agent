@@ -192,3 +192,6 @@ cython_debug/
 
 # VSCode
 .vscode/
+
+# Roo code
+.roo/
