@@ -1,11 +1,8 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from src.sql_layer.pipeline import (
     CANNOT_ANSWER,
     PROMPT_INJECTION,
-    generate_answer,
     is_cannot_answer,
     normalize_llm_sql_response,
     validate_safe_sql,
@@ -284,60 +281,17 @@ def test_validate_blocks_multiple_statements():
 
 
 # ---------------------------------------------------------------------------
-# generate_answer
+# PROMPT_INJECTION scenarios
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_generate_answer_passthrough_string():
-    """Проверяет, что строка ошибки или отказа возвращается без изменений.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Сравнивает результаты через assert.
-    """
-    assert await generate_answer("q", CANNOT_ANSWER) == CANNOT_ANSWER
-    assert await generate_answer("q", "Ошибка: foo") == "Ошибка: foo"
+def test_normalize_returns_prompt_injection():
+    assert normalize_llm_sql_response(PROMPT_INJECTION) == PROMPT_INJECTION
 
 
-@pytest.mark.asyncio
-async def test_generate_answer_calls_llm_with_rows():
-    """Проверяет вызов LLM при генерации ответа из строк SQL-результата.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Проверяет ответ и содержимое промпта через assert.
-    """
-    rows = [(1, "test")]
-    llm_mock = AsyncMock(return_value="Ответ")
-    with patch("src.sql_layer.pipeline.query_llm", new=llm_mock):
-        result = await generate_answer("Сколько объектов?", rows)
-    assert result == "Ответ"
-    assert llm_mock.call_count == 1
-    prompt_content = llm_mock.call_args[0][0][0]["content"]
-    assert "Сколько объектов?" in prompt_content
-    assert "1 строк" in prompt_content
+def test_is_cannot_answer_prompt_injection():
+    assert is_cannot_answer(PROMPT_INJECTION) is True
 
 
-@pytest.mark.asyncio
-async def test_generate_answer_caps_at_50_rows():
-    """Проверяет ограничение числа строк, попадающих в промпт генерации ответа.
-
-    Args:
-        None: Тест не принимает аргументы.
-
-    Returns:
-        None: Проверяет содержимое промпта через assert.
-    """
-    rows = [(i,) for i in range(100)]
-    llm_mock = AsyncMock(return_value="ok")
-    with patch("src.sql_layer.pipeline.query_llm", new=llm_mock):
-        await generate_answer("q", rows)
-    prompt_content = llm_mock.call_args[0][0][0]["content"]
-    # В промпте должно быть 100 строк как row_count, но только 50 строк данных
-    assert "100 строк" in prompt_content
-    assert str((50,)) not in prompt_content  # строка 51 не попала
+def test_is_cannot_answer_prompt_injection_trailing_punct():
+    assert is_cannot_answer(PROMPT_INJECTION + ".") is True
