@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 import sqlglot
 from sqlglot import exp
 
-from src.agent.llm_client import query_llm
-from src.sql_layer.prompts import REVIEW_PROMPT
+from agent.llm_client import query_llm
+from sql_layer.prompts import REVIEW_PROMPT
 
 if TYPE_CHECKING:
     pass
@@ -256,7 +256,7 @@ async def main(
 
     Args:
         messages (list[dict]): Список сообщений из промпта и запросов в модель.
-        model_name (str): Идентификатор модели на OpenRouter.
+        model_name (str): Идентификатор модели на OpenRouter (default: Llama-3.3 70b)
 
     Returns:
         dict с ключами:
