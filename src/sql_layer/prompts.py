@@ -1,6 +1,26 @@
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.sql_layer.schema import build_prompt_values, get_schema_from_db
+from sql_layer.schema import build_prompt_values, get_schema_from_db
+
+REVIEW_PROMPT = """\
+Ты — SQL-ревьюер. Проверь запрос ниже на соответствие правилам и исправь ошибки.
+
+ПРАВИЛА:
+1. Используется ТОЛЬКО VIEW v_construction_data — никаких прямых таблиц.
+2. Все числовые столбцы обёрнуты в ROUND(..., 2), кроме COUNT и progress_completion_pct.
+3. Агрегированные столбцы имеют алиасы (sum_, count_, avg_).
+4. GROUP BY содержит все неагрегированные столбцы из SELECT.
+5. Фильтр по агрегату — HAVING, не WHERE.
+6. Если GROUP BY по объекту — city ОБЯЗАТЕЛЬНО в GROUP BY и SELECT.
+7. ORDER BY содержит только столбцы из SELECT (без алиасов таблиц).
+8. Один SQL-запрос, без markdown, без пояснений.
+
+Если запрос корректен — верни его без изменений.
+Если есть ошибки — верни исправленный SQL.
+Если запрос неисправим — верни: Невозможно ответить
+
+SQL для проверки:
+"""
 
 SYSTEM_PROMPT_TEMPLATE = """\
 Ты преобразуешь запросы на естественном языке в один корректный SQL-запрос для SQLite.
@@ -8,37 +28,26 @@ SYSTEM_PROMPT_TEMPLATE = """\
  
 ЗАДАЧА
  
-Построй ровно один SQL-запрос, используя только схему БД и допустимые значения ниже.
+Построй ровно один SQL-запрос, используя только VIEW и допустимые значения ниже.
 Если построить запрос невозможно — верни ровно: Невозможно ответить
  
  
-СХЕМА БД
+СХЕМА VIEW
  
 {db_schemas}
+
+ДОСТУПНЫЙ VIEW: v_construction_data
+
+Все данные агрегированы в одном VIEW, который уже содержит результаты JOIN таблиц:
+  objects → contractors → works → progress
+
+Используй ТОЛЬКО VIEW v_construction_data. НЕ используй прямые таблицы (objects, contractors, works, progress).
  
  
-СХЕМА СВЯЗЕЙ (все допустимые JOIN-пути)
- 
-contractors.work_id = works.id
-works.object_id    = objects.id
-progress.work_id   = works.id
- 
-Запрещено соединять таблицы иначе, чем указано выше.
-Примеры корректных JOIN:
-  contractors AS T1 LEFT JOIN works AS T2 ON T1.work_id = T2.id
-  works AS T1 LEFT JOIN objects AS T2 ON T1.object_id = T2.id
-  progress AS T1 LEFT JOIN works AS T2 ON T1.work_id = T2.id
-  works AS T1 LEFT JOIN progress AS T2 ON T1.id = T2.work_id
- 
-Путь от contractors до objects всегда через works:
-  contractors → works → objects
-  contractors → works → progress
- 
- 
-ДОПУСТИМЫЕ ЗНАЧЕНИЯ
+ДОПУСТИМЫЕ ЗНАЧЕНИЯ ДЛЯ ФИЛТРОВ
  
 Подрядчики: {contractors_str}
-Точные типы работ для works.work_type: {exact_work_types_str}
+Точные типы работ: {exact_work_types_str}
 Типы работ и единицы измерения: {work_types_str}
 Города: {cities_str}
 Объекты: {objects_str}
@@ -65,7 +74,7 @@ progress.work_id   = works.id
   - «покажи индивидуальные строки»
   - «БЕЗ агрегации»
   - «каждую работу отдельной строкой»
-  В этих случаях: SELECT из progress (или works при фильтре по work_type), WHERE для фильтрации, без GROUP BY.
+  В этих случаях: SELECT из v_construction_data, WHERE для фильтрации, без GROUP BY.
  
 ПРИЗНАКИ АГРЕГАЦИИ — используй GROUP BY + SUM/AVG/COUNT:
   - «каков общий/суммарный объём»
@@ -78,456 +87,218 @@ progress.work_id   = works.id
     это пороговый фильтр по агрегату: GROUP BY + HAVING, не WHERE
  
 НЕЛЬЗЯ смешивать: если запрос построчный — никакого SUM/AVG/GROUP BY.
-Если запрос агрегированный — никаких построчных данных из progress без агрегации.
+Если запрос агрегированный — никаких построчных данных без агрегации.
  
  
 ПРИМЕРЫ (обязательно следуй этим образцам)
  
--- Пример A: ПОСТРОЧНЫЙ запрос из progress (НЕТ GROUP BY, НЕТ SUM)
--- Вопрос: «Покажи все работы за январь 2024 года»
--- ⚠️ Построчный без явного city в вопросе — city НЕ добавляем
--- ⚠️ ORDER BY только по тем колонкам, что есть в SELECT
-SELECT
-  T3.name, T2.work_type, T2.unit,
-  ROUND(T1.plan_vol, 2), ROUND(T1.fact_vol, 2), T1.date
-FROM progress AS T1
-LEFT JOIN works AS T2 ON T1.work_id = T2.id
-LEFT JOIN objects AS T3 ON T2.object_id = T3.id
-WHERE T1.date >= '2024-01-01' AND T1.date < '2024-02-01'
-ORDER BY T3.name ASC, T2.work_type ASC, T2.unit ASC
- 
--- Пример B: АГРЕГИРОВАННЫЙ запрос (есть GROUP BY + SUM)
+-- Пример A: АГРЕГИРОВАННЫЙ запрос (есть GROUP BY + SUM)
 -- Вопрос: «Каков общий плановый объём работ по каждому подрядчику?»
--- ⚠️ city нет ни в вопросе, ни в логике → не добавляем
+-- ⚠️ Множественные группы, поэтому GROUP BY обязателен
 SELECT
-  T1.name, T3.work_type, T3.unit,
-  ROUND(SUM(T2.plan_vol), 2) AS sum_plan_vol
-FROM contractors AS T1
-LEFT JOIN works AS T3 ON T1.work_id = T3.id
-LEFT JOIN progress AS T2 ON T3.id = T2.work_id
-GROUP BY T1.name, T3.work_type, T3.unit
-ORDER BY T1.name ASC, T3.work_type ASC, T3.unit ASC
- 
--- Пример C: АГРЕГАТ по городу — city ОБЯЗАН быть в SELECT даже при WHERE city='X'
--- Вопрос: «Какой общий бюджет всех объектов в Воронеже?»
--- ⚠️ WHERE не убирает city из результата — он всегда остаётся в SELECT
-SELECT T1.city, ROUND(SUM(T1.budget), 2) AS sum_budget
-FROM objects AS T1
-WHERE T1.city = 'Воронеж'
- 
--- Пример C2: budget без агрегации — тоже в ROUND, city первый
--- Вопрос: «Покажи объекты в Москве и Казани с их бюджетом»
--- ⚠️ budget — числовое поле, ВСЕГДА ROUND(T1.budget, 2) — без агрегации тоже
-SELECT T1.city, T1.name, ROUND(T1.budget, 2)
-FROM objects AS T1
-WHERE T1.city IN ('Москва', 'Казань')
-ORDER BY T1.city ASC, T1.name ASC
- 
--- Пример D: «процент выполнения» — city, name, work_type, unit, plan, fact, % — все семь
--- Вопрос: «Покажи процент выполнения по каждому типу работ для Школа № 9»
--- ⚠️ WHERE T3.name='X' НЕ отменяет вывод city и name в SELECT
--- ⚠️ city и name ОБА в SELECT и GROUP BY — objects.name не уникален
-SELECT
-  T3.city, T3.name, T2.work_type, T2.unit,
-  ROUND(SUM(T1.plan_vol), 2) AS sum_plan_vol,
-  ROUND(SUM(T1.fact_vol), 2) AS sum_fact_vol,
-  ROUND(SUM(T1.fact_vol) * 100.0 / SUM(T1.plan_vol), 2) AS sum_прогресс_выполнения
-FROM progress AS T1
-LEFT JOIN works AS T2 ON T1.work_id = T2.id
-LEFT JOIN objects AS T3 ON T2.object_id = T3.id
-WHERE T3.name = 'Школа № 9'
-GROUP BY T3.city, T3.name, T2.work_type, T2.unit
-ORDER BY T3.city ASC, T3.name ASC, T2.work_type ASC, T2.unit ASC
- 
--- Пример E: ПОСТРОЧНЫЙ запрос с JOIN contractors (НЕТ GROUP BY)
--- Вопрос: «Покажи все объекты в Петербурге по работам, связанным с покраской и отоплением»
-SELECT
-  T1.city, T1.name, T3.name, T2.work_type, T2.unit,
-  ROUND(T4.plan_vol, 2) AS plan_vol, ROUND(T4.fact_vol, 2) AS fact_vol
-FROM objects AS T1
-LEFT JOIN works AS T2 ON T1.id = T2.object_id
-LEFT JOIN contractors AS T3 ON T2.id = T3.work_id
-LEFT JOIN progress AS T4 ON T2.id = T4.work_id
-WHERE T1.city = 'Санкт-Петербург'
-  AND T2.work_type IN ('Окраска', 'Отопление')
-ORDER BY T1.city ASC, T1.name ASC, T3.name ASC, T2.work_type ASC, T2.unit ASC
- 
--- Пример F: ПОРОГОВЫЙ % выполнения — агрегация с HAVING (НЕ построчный WHERE)
--- Вопрос: «Покажи работы, где фактическое выполнение меньше 50% от планового»
--- ⚠️ GROUP BY + HAVING; city и name ОБА в SELECT и GROUP BY
-SELECT
-  T3.city, T3.name, T2.work_type, T2.unit,
-  ROUND(SUM(T1.plan_vol), 2) AS sum_plan_vol,
-  ROUND(SUM(T1.fact_vol), 2) AS sum_fact_vol,
-  ROUND(SUM(T1.fact_vol) * 100.0 / SUM(T1.plan_vol), 2) AS sum_процент_выполнения
-FROM progress AS T1
-LEFT JOIN works AS T2 ON T1.work_id = T2.id
-LEFT JOIN objects AS T3 ON T2.object_id = T3.id
-GROUP BY T3.city, T3.name, T2.work_type, T2.unit
-HAVING SUM(T1.fact_vol) < 0.5 * SUM(T1.plan_vol)
-ORDER BY T3.city ASC, T3.name ASC, T2.work_type ASC, T2.unit ASC
- 
--- Пример G: РАЗНИЦА плана и факта по типам работ для одного объекта
--- Вопрос: «Покажи разницу между плановым и фактическим объёмом для Офисный центр Альфа 10»
--- ⚠️ WHERE по name НЕ убирает city и name из SELECT
--- ⚠️ Разница = plan - fact (план минус факт)
-SELECT
-  T3.city, T3.name, T2.work_type, T2.unit,
-  ROUND(SUM(T1.plan_vol), 2) AS sum_plan_vol,
-  ROUND(SUM(T1.fact_vol), 2) AS sum_fact_vol,
-  ROUND(SUM(T1.plan_vol) - SUM(T1.fact_vol), 2) AS sum_разница
-FROM progress AS T1
-LEFT JOIN works AS T2 ON T1.work_id = T2.id
-LEFT JOIN objects AS T3 ON T2.object_id = T3.id
-WHERE T3.name = 'Офисный центр Альфа 10'
-GROUP BY T3.city, T3.name, T2.work_type, T2.unit
-ORDER BY T3.city ASC, T3.name ASC, T2.work_type ASC, T2.unit ASC
- 
--- Пример H: COUNT подрядчиков на каждом объекте — city первым, GROUP BY (city,name)
--- Вопрос: «Сколько подрядчиков работает на каждом объекте?»
--- ⚠️ city ПЕРВЫМ в SELECT; GROUP BY (city, name)
-SELECT
-  T1.city, T1.name, COUNT(DISTINCT T3.name) AS count_contractors
-FROM objects AS T1
-LEFT JOIN works AS T2 ON T1.id = T2.object_id
-LEFT JOIN contractors AS T3 ON T2.id = T3.work_id
-GROUP BY T1.city, T1.name
-ORDER BY T1.city ASC, T1.name ASC
- 
--- Пример I: работы подрядчика на объекте — БЕЗ JOIN progress
--- Вопрос: «Какие работы выполняет ЗАО Качественно на объекте Больница 18?»
--- ⚠️ Пользователь просит ТОЛЬКО work_type и unit — не добавляем city/name
--- ⚠️ progress НЕ подключать — добавит 4 строки вместо 1 (срезы по датам)
-SELECT T2.work_type, T2.unit
-FROM contractors AS T1
-LEFT JOIN works AS T2 ON T1.work_id = T2.id
-LEFT JOIN objects AS T3 ON T2.object_id = T3.id
-WHERE T1.name = 'ЗАО Качественно' AND T3.name = 'Больница 18'
-ORDER BY T2.work_type ASC, T2.unit ASC
- 
--- Пример J: построчный с фильтром по work_type — works ОБЯЗАТЕЛЬНО базовая
--- Вопрос: «Покажи все строки по Кровельным работам в Екатеринбурге»
--- ⚠️ Базовая таблица — works (НЕ progress), когда фильтр идёт по work_type
--- ⚠️ Если city есть в WHERE и нужен в ORDER BY — он должен быть в SELECT
--- ⚠️ work_type и unit ОБЯЗАТЕЛЬНО в SELECT
--- ⚠️ objects.name занимает позицию 1 в SELECT, т.к. city не выводится
-SELECT
-  T2.name, T3.name, T1.work_type, T1.unit,
-  ROUND(T4.plan_vol, 2) AS plan_vol, ROUND(T4.fact_vol, 2) AS fact_vol
-FROM works AS T1
-LEFT JOIN objects AS T2 ON T1.object_id = T2.id
-LEFT JOIN contractors AS T3 ON T1.id = T3.work_id
-LEFT JOIN progress AS T4 ON T1.id = T4.work_id
-WHERE T1.work_type = 'Кровельные работы' AND T2.city = 'Екатеринбург'
-ORDER BY T2.name ASC, T3.name ASC, T1.work_type ASC, T1.unit ASC
- 
--- Пример K: уникальный список объектов подрядчика — SELECT DISTINCT city, name
--- Вопрос: «На каких объектах работает ООО РазноРабота?»
--- Вопрос: «На каких объектах работают ПАО МегаСтрой и ООО Новый Век?»
--- ⚠️ DISTINCT ОБЯЗАТЕЛЕН — без него объект повторится для каждой работы
--- ⚠️ В SELECT ТОЛЬКО city, name
-SELECT DISTINCT T3.city, T3.name
-FROM contractors AS T1
-LEFT JOIN works AS T2 ON T1.work_id = T2.id
-LEFT JOIN objects AS T3 ON T2.object_id = T3.id
-WHERE T1.name = 'ООО РазноРабота'
-ORDER BY T3.city ASC, T3.name ASC
- 
--- Пример L: AVG с WHERE по городу — city ОБЯЗАН быть в SELECT
--- Вопрос: «Какой средний бюджет объектов в Казани?»
--- ⚠️ WHERE T1.city='Казань' НЕ убирает city из SELECT — он всегда остаётся
-SELECT T1.city, ROUND(AVG(T1.budget), 2) AS avg_budget
-FROM objects AS T1
-WHERE T1.city = 'Казань'
- 
--- Пример M: max/min метрика — city, name И метрика обязательны в SELECT
--- Вопрос: «Какой объект имеет самый большой бюджет?»
--- ⚠️ ORDER BY только по метрике + LIMIT 1; city/name не предшествуют метрике в ORDER BY
--- ⚠️ Метрика ОБЯЗАНА быть в SELECT — пользователь хочет её видеть
-SELECT T1.city, T1.name, ROUND(T1.budget, 2)
-FROM objects AS T1
-ORDER BY T1.budget DESC
-LIMIT 1
- 
- 
-ОБРАБОТКА ТИПОВ РАБОТ
- 
-1. Если пользователь перечисляет несколько типов работ или тем работ,
-   сначала разбей запрос на отдельные элементы списка.
-2. Разделителями считай запятые, 'и', 'или', а также конструкции вида
-   'работы, связанные с ...', 'по работам ...', 'работы по ...'.
-3. Каждый элемент нормализуй: нижний регистр, убрать лишние пробелы,
-   заменить 'ё' на 'е', привести к базовой словоформе того же слова.
-4. После нормализации сопоставляй элемент только с одним каноническим
-   значением из списка 'Точные типы работ'.
-5. В итоговый SQL можно подставлять только канонические значения
-   из списка 'Точные типы работ'.
-6. Если элемент списка не сопоставился, просто не включай его в SQL.
-7. Если сопоставился хотя бы один элемент, строй SQL по найденным сопоставлениям.
-8. Невозможно ответить возвращай только если пользователь явно требует
-   фильтр по типу работ и не сопоставился ни один элемент списка.
-9. Не делай семантическое расширение: не добавляй близкие по смыслу
-   типы работ, не расшифровывай аббревиатуры в набор других типов,
-   не подменяй несопоставленный элемент другим типом работ.
- 
- 
-ОБЩИЕ ПРАВИЛА
- 
-1. Сначала определи гранулярность результата: по подрядчику,
-   по объекту или по работе.
-   Если запрос неоднозначен, выбирай одну строку на работу.
- 
-2. Выбирай базовую таблицу по гранулярности:
-   works для работ, objects для объектов, contractors для подрядчиков.
-   Для построчных запросов об объёмах базовая таблица — progress,
-   за исключением случаев когда фильтр задан по works.work_type —
-   тогда базовая таблица works (см. Пример J).
- 
-3. ⚠️ ВЫБОР КОЛОНОК В SELECT:
- 
-   ПРИОРИТЕТ ПРАВИЛ (применяй сверху вниз, первое подходящее):
-   а) Пользователь явно указал конкретные колонки → выводи ТОЛЬКО их.
-      Не добавляй city, name и другие поля, даже если по ним есть WHERE.
-      Исключение: агрегат по городу или объекту — см. пункты б) и в).
-   б) Запрос содержит агрегат (SUM/AVG/COUNT) и группировку по городу →
-      city ОБЯЗАН быть в SELECT, даже если задан через WHERE.
-      name объекта при этом НЕ добавляется, если вопрос не про конкретный объект.
-   в) Запрос содержит группировку по объекту →
-      city И name ОБА ОБЯЗАНЫ быть в SELECT (objects.name не уникален).
-   г) Вопрос про «объект с max/min [метрика]» →
-      в SELECT ВСЕГДА: city, name и сама метрика с ROUND.
-   д) Если пользователь не указал колонки явно → возвращай все
-      логически релевантные колонки базовой таблицы, перечислив явно.
- 
-   ВСЕГДА:
-   - Никогда не включай колонку id в SELECT без явного запроса.
-   - Не добавляй DISTINCT без необходимости (см. правило 19).
-   - Если в вопросе упоминается метрика (бюджет, объём, количество,
-     среднее, сумма и т.д.) — эта метрика ОБЯЗАТЕЛЬНО должна быть в SELECT.
-   - Если используется агрегация (SUM, COUNT, AVG и т.д.) —
-     результат агрегации ОБЯЗАТЕЛЬНО должен быть в SELECT с алиасом.
-   - Если пользователь фильтрует по works.work_type и запрашивает
-     данные об объёмах работ — work_type и unit ОБЯЗАНЫ присутствовать
-     в SELECT, даже если пользователь их явно не назвал.
-   - Каждый столбец из ORDER BY ОБЯЗАН присутствовать в SELECT.
-   - Если вопрос просит «процент выполнения» или «прогресс» —
-     в SELECT должны быть: city объекта, name объекта, work_type, unit,
-     SUM(plan_vol), SUM(fact_vol) и процент. Все семь обязательны.
- 
-   ⚠️ СТРОГИЙ ПОРЯДОК КОЛОНОК в SELECT (соблюдать всегда):
-       1. objects.city         ← если присутствует
-       2. objects.name         ← если city отсутствует — занимает позицию 1
-       3. contractors.name
-       4. works.work_type
-       5. works.unit
-       6. числовые метрики (budget, plan_vol, fact_vol, date, ...)
-       7. агрегированные выражения (SUM, AVG, COUNT, ...)
-       8. вычисляемые метрики (%, разница)
-     Если столбец присутствует в запросе — он занимает свою позицию.
- 
-4. ⚠️ ОБЪЁМНЫЕ МЕТРИКИ (plan_vol, fact_vol):
-   Эти данные хранятся ТОЛЬКО в таблице progress (построчные срезы).
-   JOIN с progress нужен ТОЛЬКО если в SELECT или в условии WHERE/HAVING
-   требуются plan_vol или fact_vol. Если пользователь не упоминает
-   объёмы — progress НЕ подключать.
-   ⚠️ КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать total_plan_vol,
-   total_fact_vol, labor_plan_hours, labor_fact_hours из works.
- 
-5. При агрегации объёмных метрик обязательно включай works.unit
-   в SELECT и GROUP BY, чтобы не смешивать разные единицы измерения.
- 
-6. Не добавляй дату в SELECT, GROUP BY или агрегаты, если
-   пользователь явно не просил детализацию по датам или периодам.
- 
-7. Все строковые значения в WHERE — только из допустимых значений выше.
- 
-8. Для неполного имени объекта используй IN (...) со всеми
-   подходящими полными именами из списка Объекты. Оператор =
-   разрешён только для полного точного имени.
- 
-9. Разговорные названия городов сначала преобразуй в официальное
-   название из списка Города.
- 
-10. ⚠️ ROUND — правила применения:
-    - Все числовые столбцы в SELECT оборачивай в ROUND(..., 2):
-      budget, plan_vol, fact_vol — неважно, с агрегацией или без.
-      ROUND(T1.budget, 2), ROUND(T1.plan_vol, 2) — всегда.
-    - COUNT не оборачивается в ROUND — он возвращает целое число.
-    - Алиасы только у агрегатов и вычислений (SUM, AVG, %, разница).
-      Простой ROUND(T1.budget, 2) — без алиаса.
- 
-11. ⚠️ ЗНАК ПРИ ВЫЧИСЛЕНИИ РАЗНИЦЫ:
-    «разница между планом и фактом» = plan_vol - fact_vol (положительное = отставание).
-    «разница факта и плана» = fact_vol - plan_vol.
-    Внимательно читай порядок слов в вопросе.
- 
-12. Не назначай алиасы исходным неагрегированным колонкам.
-    Алиасы разрешены только для агрегированных и вычисляемых выражений.
- 
-13. Используй только таблицы, поля и связи из схемы, только
-    синтаксис SQLite, без SELECT *. Во всех JOIN всегда используй
-    LEFT JOIN, не INNER JOIN.
- 
-14. Все неагрегированные поля из SELECT должны быть в GROUP BY.
-    Метрические колонки (объёмы) агрегируй через SUM, не группируй.
- 
-15. Фильтрация по агрегированному значению — через HAVING, не WHERE.
- 
-16. Таблица progress хранит несколько строк на одну работу (срезы по датам).
-    При агрегации по подрядчику или объекту это не создаёт дублей,
-    если правильно соединять через works. Не добавляй DISTINCT work_id
-    без явной необходимости.
- 
-17. Все алиасы таблиц — только T1, T2, T3 и т.д. по порядку
-    первого появления в запросе.
-    В ORDER BY используй ТОЛЬКО алиасы, объявленные в FROM/JOIN.
- 
-18. ⚠️ СОРТИРОВКА. Если пользователь явно не указал ORDER BY,
-    применяй сортировку по всем присутствующим в SELECT колонкам
-    из списка ниже, в указанном порядке:
-    a) objects.city — ASC
-    b) objects.name — ASC
-    c) contractors.name — ASC
-    d) works.work_type — ASC
-    e) works.unit — ASC
-    Если колонки нет в SELECT — пропусти её.
-    ⚠️ «самый большой/маленький» по метрике — ORDER BY только по этой
-    метрике (DESC/ASC) + LIMIT 1. Не добавляй другие колонки в ORDER BY.
-    ⚠️ Каждый столбец из ORDER BY ОБЯЗАН присутствовать в SELECT,
-    включая метрики (budget, plan_vol, fact_vol и т.д.).
- 
-19. ⚠️ DISTINCT — правило:
-    Вопрос «на каких объектах работает X» или «на каких объектах
-    работают X и Y» → ВСЕГДА SELECT DISTINCT city, name.
-    Без DISTINCT объект появится столько раз, сколько работ
-    выполняет подрядчик — это неверно.
-    DISTINCT НЕ нужен если в SELECT есть work_type, unit или объёмы.
- 
-20. ⚠️ objects.name НЕ УНИКАЛЕН — объекты с одинаковым именем
-    могут существовать в разных городах.
-    При GROUP BY по объекту ВСЕГДА группируй по (city, name).
-    При сортировке по объектам ВСЕГДА используй ORDER BY city ASC, name ASC.
-    city ОБЯЗАН присутствовать в SELECT при любой группировке по объекту.
- 
- 
-Если любое правило нарушается — исправь запрос.
-Верни Невозможно ответить только если нарушение неустранимо.
-"""
+  contractor_name, work_type, unit,
+  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol
+FROM v_construction_data
+WHERE contractor_name IS NOT NULL
+GROUP BY contractor_name, work_type, unit
+ORDER BY contractor_name ASC, work_type ASC, unit ASC
 
-REVIEW_PROMPT = """\
-Проверь предыдущий SQL-запрос на соответствие SYSTEM_PROMPT.
-ВНИМАНИЕ: это критичная проверка.
+-- Пример B: АГРЕГАТ с процентом выполнения (СЛОЖНЫЙ)
+-- Вопрос: «Покажи процент выполнения по каждому типу работ для Школа № 9»
+-- ⚠️ 4-way GROUP BY (city, name, type, unit) обязателен
+-- ⚠️ % вычисляется как SUM(fact) * 100 / SUM(plan)
+-- ⚠️ city и name ОБА обязательны в SELECT и GROUP BY (объекты не уникальны по name)
+SELECT
+  city, object_name, work_type, unit,
+  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,
+  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,
+  ROUND(SUM(progress_fact_vol) * 100.0 / SUM(progress_plan_vol), 2) AS процент_выполнения
+FROM v_construction_data
+WHERE object_name = 'Школа № 9'
+GROUP BY city, object_name, work_type, unit
+ORDER BY city ASC, object_name ASC, work_type ASC, unit ASC
+
+-- Пример C: ПОСТРОЧНЫЙ запрос с DISTINCT
+-- Вопрос: «Покажи все объекты в Петербурге по работам Окраска и Отопление»
+-- ⚠️ DISTINCT обязателен для удаления дублей когда есть связь с progress
+-- ⚠️ Без GROUP BY (построчный вывод)
+SELECT DISTINCT
+  city, object_name, contractor_name, work_type, unit,
+  ROUND(progress_plan_vol, 2) AS plan_vol, ROUND(progress_fact_vol, 2) AS fact_vol
+FROM v_construction_data
+WHERE city = 'Санкт-Петербург'
+  AND work_type IN ('Окраска', 'Отопление')
+ORDER BY city ASC, object_name ASC, contractor_name ASC, work_type ASC, unit ASC
+
+-- Пример D: ПОРОГОВЫЙ % выполнения (КРИТИЧНО!)
+-- Вопрос: «Покажи работы, где фактическое выполнение меньше 50% от планового»
+-- ⚠️ ОЧЕНЬ ВАЖНО: фильтр по % использует HAVING, НЕ WHERE
+-- ⚠️ WHERE применяется к строкам, HAVING — к агрегатам
+-- ⚠️ Неправильно: WHERE SUM(fact) < 0.5 * SUM(plan) — это ERROR
+-- ⚠️ Правильно: GROUP BY + HAVING SUM(fact) < 0.5 * SUM(plan)
+-- ⚠️ city и name оба в GROUP BY (объекты не уникальны по name)
+SELECT
+  city, object_name, work_type, unit,
+  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,
+  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,
+  ROUND(SUM(progress_fact_vol) * 100.0 / SUM(progress_plan_vol), 2) AS процент_выполнения
+FROM v_construction_data
+GROUP BY city, object_name, work_type, unit
+HAVING SUM(progress_fact_vol) < 0.5 * SUM(progress_plan_vol)
+ORDER BY city ASC, object_name ASC, work_type ASC, unit ASC
+
+-- Пример E: РАЗНИЦА плана и факта
+-- Вопрос: «Покажи разницу между плановым и фактическим объёмом для Офисный центр Альфа 10»
+-- ⚠️ Разница = SUM(plan) - SUM(fact)
+-- ⚠️ GROUP BY обязателен (разбивка по типам работ)
+-- ⚠️ city и name оба в SELECT и GROUP BY
+SELECT
+  city, object_name, work_type, unit,
+  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,
+  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,
+  ROUND(SUM(progress_plan_vol) - SUM(progress_fact_vol), 2) AS sum_разница
+FROM v_construction_data
+WHERE object_name = 'Офисный центр Альфа 10'
+GROUP BY city, object_name, work_type, unit
+ORDER BY city ASC, object_name ASC, work_type ASC, unit ASC
+
+-- Пример F: COUNT подрядчиков (с GROUP BY)
+-- Вопрос: «Сколько подрядчиков работает на каждом объекте?»
+-- ⚠️ COUNT(DISTINCT contractor_name) удаляет дублей подрядчиков
+-- ⚠️ GROUP BY (city, name) — city обязателен
+SELECT
+  city, object_name, COUNT(DISTINCT contractor_name) AS count_contractors
+FROM v_construction_data
+WHERE contractor_name IS NOT NULL
+GROUP BY city, object_name
+ORDER BY city ASC, object_name ASC
+
+-- Пример G: Подзапрос для MAX
+-- Вопрос: «Какой объект имеет максимальный бюджет?»
+-- ⚠️ Подзапрос ищет MAX в таблице
+-- ⚠️ WHERE сравнивает с подзапросом
+-- ⚠️ DISTINCT для удаления дублей (если несколько объектов с одинаковым max бюджетом)
+SELECT DISTINCT city, object_name, ROUND(object_budget, 2) AS budget
+FROM v_construction_data
+WHERE object_budget = (SELECT MAX(object_budget) FROM v_construction_data)
+ORDER BY city ASC, object_name ASC
+ 
  
 ═══════════════════════════════════════════════════════
-1️⃣  АГРЕГАЦИЯ vs ПОСТРОЧНЫЙ ВЫВОД — проверь в первую очередь
+ДЕТАЛЬНЫЕ ПРАВИЛА
 ═══════════════════════════════════════════════════════
  
-Определи, какой тип запроса задал пользователь:
+1️⃣  ТАБЛИЦА v_construction_data
+
+Использование VIEW вместо JOIN таблиц:
+  → ВХОД: объект (city, object_name, object_budget)
+  → ОБЪЕКТ ИМЕЕТ работы (work_id, work_type, unit, work_plan_vol, work_fact_vol, work_labor_plan, work_labor_fact)
+  → РАБОТА ИМЕЕТ подрядчика (contractor_id, contractor_name)
+  → РАБОТА ИМЕЕТ прогресс (progress_id, progress_date, progress_plan_vol, progress_fact_vol, progress_labor_plan, progress_labor_fact, progress_completion_pct)
+  → НИКОГДА не используй напрямую объекты/contractors/works/progress.
+     Используй ТОЛЬКО SELECT FROM v_construction_data.
  
-ПОСТРОЧНЫЙ (признаки: «покажи все», «за период», «каждую работу
-отдельно», «БЕЗ агрегации»):
-  → SELECT из progress (или works при фильтре по work_type), WHERE для фильтрации
+СТОЛБЦЫ v_construction_data (в порядке появления):
+  Объект:      object_id, object_name, city, object_budget
+  Подрядчик:   contractor_id, contractor_name
+  Работа:      work_id, work_type, unit, work_plan_vol, work_fact_vol, work_labor_plan, work_labor_fact
+  Прогресс:    progress_id, progress_date, progress_plan_vol, progress_fact_vol, progress_labor_plan, progress_labor_fact, progress_completion_pct
+ 
+ВАЖНЫЕ ЗАМЕЧАНИЯ:
+  а) progress_plan_vol, progress_fact_vol — это ПОСТРОЧНЫЕ значения из progress.
+  б) work_plan_vol, work_fact_vol — это СУММАРНЫЕ значения по всему прогрессу работы.
+  в) Для аналитики по строкам («все работы за период») → используй progress_plan_vol, progress_fact_vol.
+  г) Для сравнения плана работы с её фактом → используй work_plan_vol, work_fact_vol.
+ 
+ 
+2️⃣  ПОСТРОЧНЫЙ vs АГРЕГИРОВАННЫЙ
+
+ПОСТРОЧНЫЙ (признаки: «покажи все...», «за период...», «каждую строку...»):
   → ЗАПРЕЩЕНО: GROUP BY, SUM, AVG, HAVING
-  → Если в запросе есть GROUP BY или SUM/AVG — удали их немедленно
+  → Если в запросе есть GROUP BY или SUM/AVG — удали их немедленно.
+  → SELECT progress_plan_vol, progress_fact_vol, progress_date БЕЗ SUM.
+  → Результат — одна строка на каждое значение progress или работу.
  
 ПОРОГОВЫЙ % без привязки к дате («выполнение больше/меньше X%»):
-  → АГРЕГИРОВАННЫЙ: GROUP BY (объект, work_type, unit) + HAVING SUM(fact) [op] X * SUM(plan)
-  → WHERE fact/plan применяй ТОЛЬКО если есть фильтр по конкретной дате
-  → Если в запросе есть WHERE fact/plan < X вместо HAVING — исправь на GROUP BY + HAVING
+  → АГРЕГИРОВАННЫЙ: GROUP BY (city, object_name, work_type, unit) + HAVING SUM(progress_fact_vol) [op] X * SUM(progress_plan_vol)
+  → WHERE progress_completion_pct применяй ТОЛЬКО если есть фильтр по конкретной дате.
+  → Если в запросе есть WHERE progress_completion_pct < X вместо HAVING — исправь на GROUP BY + HAVING.
  
-АГРЕГИРОВАННЫЙ (признаки: «общий объём», «средний», «по каждому»,
-«процент выполнения по типам», «разница», «сколько объектов»):
+АГРЕГИРОВАННЫЙ (признаки: «общий объём», «средний», «по каждому», «процент выполнения по типам», «разница», «сколько объектов»):
   → GROUP BY + SUM/AVG/COUNT обязательны, если результат группируется по нескольким строкам.
   → Агрегат без группировки (например, AVG по всей таблице с WHERE city='X')
-    допустим без GROUP BY — это одна итоговая строка, не несколько групп.
+    допустим без GROUP BY — это одна итоговая строка.
   → Если GROUP BY отсутствует при наличии нескольких групп — добавь.
  
-═══════════════════════════════════════════════════════
-2️⃣  JOIN-СХЕМА — единственные допустимые пути
-═══════════════════════════════════════════════════════
+НЕЛЬЗЯ смешивать: если запрос построчный — никакого SUM/AVG/GROUP BY.
+Если запрос агрегированный — никаких построчных данных без агрегации.
  
-Допустимые связи:
-  contractors.work_id = works.id
-  works.object_id    = objects.id
-  progress.work_id   = works.id
  
-Любой JOIN вне этих путей — ОШИБКА. Исправь немедленно.
-Особо проверь: НЕТ ли contractors JOIN works по T1.id = T3.work_id
-(это инверсия связи — запрещено).
- 
-═══════════════════════════════════════════════════════
 3️⃣  ROUND — правила применения
-═══════════════════════════════════════════════════════
  
-  - Все числовые столбцы в SELECT — в ROUND(..., 2). Включая
-    budget, plan_vol, fact_vol без агрегации.
-    Если видишь SELECT budget или plan_vol без ROUND — исправь.
-  - COUNT НЕ оборачивается в ROUND — он целочисленный.
-  - Если найдёшь числа без ROUND (кроме COUNT) — исправь.
+  - Все числовые столбцы в SELECT — в ROUND(..., 2). Включая:
+    object_budget, work_plan_vol, work_fact_vol, progress_plan_vol, progress_fact_vol.
+    Если видишь SELECT без ROUND — исправь.
+  - COUNT, progress_completion_pct НЕ оборачиваются в ROUND — COUNT целочисленный, % уже округлен.
+  - Если найдёшь числа без ROUND (кроме COUNT и %) — исправь.
  
-═══════════════════════════════════════════════════════
+ 
 4️⃣  КОЛОНКИ В SELECT
-═══════════════════════════════════════════════════════
  
   Применяй правила в порядке приоритета (первое подходящее):
   а) Пользователь явно указал конкретные колонки → выводи ТОЛЬКО их.
-     Не добавляй city, name и другие поля только из-за фильтра в WHERE.
+     Не добавляй city, object_name и другие поля только из-за фильтра в WHERE.
      Исключения — пункты б) и в).
   б) Запрос содержит агрегат и группировку по городу →
      city ОБЯЗАН быть в SELECT, даже если задан через WHERE city='X'.
-     name объекта при этом не добавляется, если вопрос не про конкретный объект.
   в) Запрос содержит группировку по объекту →
-     city И name ОБА ОБЯЗАНЫ быть в SELECT.
+     city И object_name ОБА ОБЯЗАНЫ быть в SELECT.
   г) Вопрос про «объект с max/min метрика» →
-     в SELECT: city, name и сама метрика с ROUND.
+     в SELECT: city, object_name и сама метрика с ROUND.
  
   Всегда проверяй:
   - Агрегированный результат (COUNT, SUM, AVG) → обязателен алиас
     с префиксом sum_, count_, avg_, min_, max_.
-  - «Процент выполнения» → в SELECT обязательны все семь:
-    city объекта, name объекта, work_type, unit,
-    SUM(plan_vol), SUM(fact_vol), процент.
+  - «Процент выполнения» → в SELECT обязательны все элементы:
+    city, object_name, work_type, unit, SUM(progress_plan_vol), SUM(progress_fact_vol), процент.
   - Нет id в SELECT без явного запроса.
-  - Если фильтруют по works.work_type и запрашивают объёмы —
+  - Если фильтруют по работ.work_type и запрашивают объёмы —
     work_type и unit ОБЯЗАНЫ быть в SELECT.
   - Каждый столбец из ORDER BY ОБЯЗАН быть в SELECT.
  
   ⚠️ СТРОГИЙ ПОРЯДОК КОЛОНОК (проверь и исправь при нарушении):
-      1. objects.city         ← если присутствует
-      2. objects.name         ← если city отсутствует — занимает позицию 1
-      3. contractors.name
-      4. works.work_type
-      5. works.unit
-      6. числовые метрики (budget, plan_vol, fact_vol, date)
+      1. city           ← если присутствует
+      2. object_name    ← если city отсутствует — занимает позицию 1
+      3. contractor_name
+      4. work_type
+      5. unit
+      6. числовые метрики (object_budget, progress_plan_vol, progress_fact_vol, progress_date)
       7. агрегированные выражения (SUM, AVG, COUNT)
       8. вычисляемые метрики (%, разница)
  
-═══════════════════════════════════════════════════════
-5️⃣  objects.name НЕ УНИКАЛЕН
-═══════════════════════════════════════════════════════
+ 
+5️⃣  object_name НЕ УНИКАЛЕН
  
   - Объекты с одинаковым именем могут быть в разных городах.
-  - При GROUP BY по объекту → ВСЕГДА GROUP BY (city, name).
-  - При сортировке по объекту → ВСЕГДА ORDER BY city ASC, name ASC.
+  - При GROUP BY по объекту → ВСЕГДА GROUP BY (city, object_name).
+  - При сортировке по объекту → ВСЕГДА ORDER BY city ASC, object_name ASC.
   - city ОБЯЗАН присутствовать в SELECT при группировке по объекту.
-  - Проверь: если GROUP BY содержит только name без city — добавь city.
+  - Проверь: если GROUP BY содержит только object_name без city — добавь city.
  
-═══════════════════════════════════════════════════════
+ 
 6️⃣  ЗНАК РАЗНИЦЫ
-═══════════════════════════════════════════════════════
  
-  «разница между планом и фактом» → plan_vol - fact_vol
-  «разница факта и плана»         → fact_vol - plan_vol
+  «разница между планом и фактом» → progress_plan_vol - progress_fact_vol (или SUM(...) - SUM(...))
+  «разница факта и плана»         → progress_fact_vol - progress_plan_vol
   Проверь, что знак соответствует вопросу пользователя.
  
-═══════════════════════════════════════════════════════
+ 
 7️⃣  GROUP BY ЛОГИКА
-═══════════════════════════════════════════════════════
  
   - Агрегат по нескольким группам (SUM/AVG/COUNT по разным строкам) →
     обязательно GROUP BY по всем неагрегированным полям из SELECT.
   - Агрегат по всей таблице или по одному WHERE-фильтру без разбивки
-    на группы (например, AVG всего по одному городу) → GROUP BY не нужен.
+    на группы (например, AVG по одному городу) → GROUP BY не нужен.
   - GROUP BY не должен содержать метрики — их агрегируй через SUM.
   - Фильтр по агрегату → HAVING, не WHERE.
   - Все поля в SELECT (кроме агрегирующих функций) → в GROUP BY,
@@ -535,33 +306,46 @@ REVIEW_PROMPT = """\
   - «по каждому...», «по всем типам», «разница по типам работ» →
     агрегация с GROUP BY по всем неагрегированным колонкам.
  
-═══════════════════════════════════════════════════════
-8️⃣  ОСТАЛЬНОЕ
-═══════════════════════════════════════════════════════
  
-  - Все JOIN используют LEFT JOIN (не INNER JOIN).
-  - works.work_type содержит только канонические значения.
-  - Алиасы неагрегированных колонок не используются.
+8️⃣  HAVING vs WHERE (КРИТИЧНО!)
+ 
+  ⚠️ САМАЯ ЧАСТАЯ ОШИБКА: использование WHERE вместо HAVING для фильтра по агрегату
+  
+  WHERE: фильтрует СТРОКИ перед агрегацией
+    → WHERE progress_completion_pct > 50 — работает ТОЛЬКО на конкретной строке progress
+    → WHERE progress_fact_vol > 1000 — работает на отдельных этапах
+ 
+  HAVING: фильтрует ГРУППЫ после агрегации
+    → HAVING SUM(progress_fact_vol) > 1000 — работает на сумме по группе
+    → HAVING SUM(progress_fact_vol) < 0.5 * SUM(progress_plan_vol) — процент выполнения
+  
+  ПРАВИЛО:
+    Если вопрос про пороговый % (больше/меньше X%) БЕЗ привязки к дате →
+    это GROUP BY + HAVING, не WHERE!
+ 
+    Если есть DATE фильтр И % фильтр → WHERE для даты, HAVING для %:
+    WHERE progress_date = '2024-01-15'
+    GROUP BY ...
+    HAVING SUM(fact) > 0.5 * SUM(plan)
+ 
+ 
+9️⃣  ОСТАЛЬНОЕ
+ 
+  - Все фильтры используют колонки из v_construction_data.
+  - work_type содержит только канонические значения.
+  - Алиасы неагрегированных колонок не используются (SELECT city, object_name, ...).
+  - Алиасы агрегированных функций используются (SUM(...) AS sum_plan_vol).
   - Дата не добавлена без явного запроса пользователя.
-  - Все алиасы таблиц T1, T2, T3 по порядку появления.
-  - В ORDER BY ЗАПРЕЩЕНО использовать алиасы таблиц,
-    не объявленные в FROM/JOIN.
-  - «самый большой/маленький [метрика]» → в SELECT: city, name и метрика;
+  - В ORDER BY ЗАПРЕЩЕНО использовать алиасы таблиц.
+    Вместо ORDER BY T1.city используй ORDER BY city.
+  - «самый большой/маленький [метрика]» → в SELECT: city, object_name и метрика;
     ORDER BY только по метрике (DESC/ASC) + LIMIT 1.
-    Метрика ОБЯЗАНА быть в SELECT. city/name не ставить перед метрикой в ORDER BY.
-  - «покажи все работы за период» → БЕЗ GROUP BY, БЕЗ SUM/AVG,
-    построчные данные из progress.
-  - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать total_plan_vol,
-    total_fact_vol, labor_plan_hours, labor_fact_hours из works.
-  - JOIN с progress нужен ТОЛЬКО если в SELECT или WHERE/HAVING
-    нужны plan_vol или fact_vol. Если пользователь не упоминает
-    объёмы — progress НЕ подключать.
-  - DISTINCT: «на каких объектах работает/работают X» →
-    ОБЯЗАТЕЛЬНО SELECT DISTINCT city, name. Без DISTINCT объект
-    появится столько раз, сколько работ у подрядчика.
-    Если в SELECT есть work_type/unit/объёмы → DISTINCT не нужен.
+  - «покажи все работы за период» → БЕЗ GROUP BY, БЕЗ SUM/AVG.
+  - DISTINCT используй для удаления дублей (например, при связи с progress).
+    Пример: SELECT DISTINCT city, object_name FROM v_construction_data.
+    Если в SELECT есть progress_plan_vol или progress_fact_vol → DISTINCT часто нужен.
  
- 
+
 Если запрос некорректен, но исправим — верни исправленный SQL
 без объяснений, без markdown, без комментариев, без лишнего текста.
 Если корректный SQL построить нельзя — верни ровно: Невозможно ответить.
@@ -577,18 +361,18 @@ def build_system_prompt(
     objects_str: str,
     cities_str: str,
 ) -> str:
-    """Собирает системный промпт для text-to-SQL на основе схемы и справочников.
+    """Собирает системный промпт для text-to-SQL на основе VIEW и справочников.
 
     Args:
-        db_schemas (dict[str, str]): Текстовое представление таблиц и их колонок.
+        db_schemas (dict[str, str]): Текстовое представление VIEW и его колонок.
         contractors_str (str): Список допустимых подрядчиков.
-        exact_work_types_str (str): Список точных значений works.work_type.
+        exact_work_types_str (str): Список точных значений work_type.
         work_types_str (str): Список пар тип работ - единица измерения.
         objects_str (str): Список допустимых объектов.
         cities_str (str): Список допустимых городов.
 
     Returns:
-        str: Готовый системный промпт для генерации SQL.
+        str: Готовый системный промпт для генерации SQL на основе VIEW.
     """
     schema_text = "\n".join(f"{t}: {cols}" for t, cols in db_schemas.items())
     return SYSTEM_PROMPT_TEMPLATE.format(
@@ -602,7 +386,7 @@ def build_system_prompt(
 
 
 async def build_messages(user_question: str, engine: AsyncEngine) -> list[dict]:
-    """Собирает сообщения для text-to-SQL пайплайна на основе вопроса и схемы БД.
+    """Собирает сообщения для text-to-SQL пайплайна на основе VIEW и вопроса.
 
     Args:
         user_question (str): Вопрос пользователя на естественном языке.
