@@ -2,43 +2,29 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
+VIEW_NAME = "v_construction_data"
+
+
 async def get_schema_from_db(engine: AsyncEngine) -> dict[str, str]:
-    """Собирает краткое текстовое описание схемы БД по таблицам и внешним ключам.
+    """Возвращает описание схемы VIEW v_construction_data.
 
     Args:
         engine (AsyncEngine): SQLAlchemy AsyncEngine для подключения к БД.
 
     Returns:
-        dict[str, str]: Словарь, где ключом является имя таблицы, а значением -
-            строка с перечислением колонок и внешних ключей.
+        dict[str, str]: Словарь с ключом-именем view и значением-строкой колонок.
     """
-    schema_parts = {}
-
     async with engine.connect() as conn:
-        tables_result = await conn.execute(
-            text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        cols_result = await conn.execute(
+            text(f"PRAGMA table_xinfo('{VIEW_NAME}')")
         )
-        table_names = [row[0] for row in tables_result.fetchall()]
+        columns = [row[1] for row in cols_result.fetchall()]
 
-        for table_name in table_names:
-            cols_result = await conn.execute(text(f"PRAGMA table_info('{table_name}')"))
-            columns = [row[1] for row in cols_result.fetchall()]
-
-            fks_result = await conn.execute(
-                text(f"PRAGMA foreign_key_list('{table_name}')")
-            )
-            for fk_row in fks_result.fetchall():
-                col_name = fk_row[3]
-                ref_table = fk_row[2]
-                columns.append(f"{col_name} (foreign key to table '{ref_table}')")
-
-            schema_parts[table_name] = ", ".join(columns)
-
-    return schema_parts
+    return {VIEW_NAME: ", ".join(columns)}
 
 
 async def build_prompt_values(engine: AsyncEngine) -> dict[str, str]:
-    """Формирует справочные значения из БД для подстановки в системный промпт.
+    """Формирует справочные значения из VIEW для подстановки в системный промпт.
 
     Args:
         engine (AsyncEngine): SQLAlchemy AsyncEngine для подключения к БД.
@@ -49,24 +35,24 @@ async def build_prompt_values(engine: AsyncEngine) -> dict[str, str]:
     """
     async with engine.connect() as conn:
         result = await conn.execute(
-            text("SELECT DISTINCT name FROM contractors ORDER BY name")
+            text(f"SELECT DISTINCT contractor_name FROM {VIEW_NAME} WHERE contractor_name IS NOT NULL ORDER BY contractor_name")
         )
         contractors = [row[0] for row in result.fetchall()]
 
         result = await conn.execute(
-            text("SELECT DISTINCT work_type, unit FROM works ORDER BY work_type, unit")
+            text(f"SELECT DISTINCT work_type, unit FROM {VIEW_NAME} WHERE work_type IS NOT NULL ORDER BY work_type, unit")
         )
         work_type_unit_rows = result.fetchall()
         exact_work_types = sorted({row[0] for row in work_type_unit_rows})
         work_types_unit = [f"{row[0]} - {row[1]}" for row in work_type_unit_rows]
 
         result = await conn.execute(
-            text("SELECT DISTINCT city FROM objects ORDER BY city")
+            text(f"SELECT DISTINCT city FROM {VIEW_NAME} WHERE city IS NOT NULL ORDER BY city")
         )
         city = [row[0] for row in result.fetchall()]
 
         result = await conn.execute(
-            text("SELECT DISTINCT name FROM objects ORDER BY name")
+            text(f"SELECT DISTINCT object_name FROM {VIEW_NAME} WHERE object_name IS NOT NULL ORDER BY object_name")
         )
         objects = [row[0] for row in result.fetchall()]
 
