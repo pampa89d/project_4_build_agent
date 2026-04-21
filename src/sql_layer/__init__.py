@@ -1,3 +1,4 @@
+from .async_db_query import query_to_sqllite
 from .pipeline import (
     CANNOT_ANSWER,
     DEFAULT_MODEL,
@@ -21,4 +22,5 @@ __all__ = [
     "get_schema_from_db",
     "build_prompt_values",
     "build_sql_query",
+    "query_to_sqllite",
 ]
