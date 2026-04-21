@@ -3,7 +3,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-db_dir = Path.cwd().parent / "data" / "db"
+db_dir = Path(__file__).resolve().parents[2] / "data" / "db"
 db_files = sorted(db_dir.glob("construction*.db"))
 
 if not db_files:
@@ -20,5 +20,5 @@ async def query_to_sqllite(query: str):
 
     data = []
     data.append(tuple(result.keys()))
-    data.append(result.fetchall())
+    data.extend(result.fetchall())
     return data
