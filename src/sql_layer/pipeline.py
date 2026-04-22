@@ -5,10 +5,13 @@ import sqlglot
 from sqlglot import exp
 
 from agent.llm_client import query_llm
+from agent.logger import get_logger
 from sql_layer.prompts import REVIEW_PROMPT
 
 if TYPE_CHECKING:
     pass
+
+log = get_logger("pipeline")
 
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
 SQL_TEMPERATURE = 0.0
@@ -101,7 +104,6 @@ def normalize_llm_sql_response(response: str | None) -> str:
             return PROMPT_INJECTION
         return CANNOT_ANSWER
 
-    # Ищем первое вхождение SQL, чтобы отрезать возможные пояснения модели.
     sql_match = re.search(r"(?is)\b(WITH|SELECT)\b.*", cleaned)
     if sql_match:
         return sql_match.group(0).strip()
@@ -162,9 +164,11 @@ def _validate_or_cannot_answer(sql: str) -> str:
     """
     try:
         return validate_safe_sql(sql)
-    except ValueError:
+    except ValueError as err:
+        log.warning("sqlglot validation failed: %s", err)
         return PROMPT_INJECTION
     except Exception as err:
+        log.error("Unexpected validation error: %s", err)
         return ERROR_ANSWER + " " + str(err)
 
 
@@ -206,70 +210,66 @@ async def build_sql_query(
     working_messages = [m.copy() for m in messages]
 
     # Stage 1: генерация чернового SQL
-    print(
-        "[build_sql_query] Stage 1 — генерация чернового SQL, "
-        f"messages count: {len(working_messages)}"
+    log.info(
+        "Stage 1 — генерация чернового SQL, messages count: %d",
+        len(working_messages),
     )
     draft_sql = await query_llm(
         messages=working_messages, model_name=model_name, temperature=SQL_TEMPERATURE
     )
-    print(f"[build_sql_query] Stage 1 — сырой ответ LLM:\n{draft_sql}")
+    log.debug("Stage 1 — сырой ответ LLM:\n%s", draft_sql)
     draft_sql_clean = normalize_llm_sql_response(draft_sql)
-    print(f"[build_sql_query] Stage 1 — нормализованный SQL:\n{draft_sql_clean}")
+    log.debug("Stage 1 — нормализованный SQL:\n%s", draft_sql_clean)
     if draft_sql_clean in REFUSAL_RESPONSES:
         return draft_sql_clean
 
     draft_sql_clean = _validate_or_cannot_answer(draft_sql_clean)
-    print(
-        "[build_sql_query] Stage 1 — после _validate_or_cannot_answer:\n"
-        f"{draft_sql_clean}"
-    )
-    if draft_sql_clean in REFUSAL_RESPONSES:
-        print(f"[build_sql_query] Stage 1 — отказ: {draft_sql_clean}")
+    log.debug("Stage 1 — после _validate_or_cannot_answer:\n%s", draft_sql_clean)
+
+    # Stage 1 прошёл sqlglot — SQL формально корректен
+    if draft_sql_clean not in REFUSAL_RESPONSES:
+        return _sqlglot_transpile(draft_sql_clean)
+
+    # Stage 1 не прошёл валидацию — пробуем LLM-ревью для исправления
+    if not need_llm_review:
+        log.warning("Stage 1 — отказ: %s", draft_sql_clean)
         return draft_sql_clean
 
-    if not need_llm_review:
-        return _sqlglot_transpile(draft_sql_clean)
-    else:
-        # Stage 2: review — LLM проверяет и исправляет SQL,
-        # это дополнительная проверка с помощью LLM,
-        # требует доп.запроса, включить при необходимости
-        formatted_draft = _sqlglot_transpile(draft_sql_clean)
-        print(f"[build_sql_query] Stage 2 — formatted_draft:\n{formatted_draft}")
-        working_messages.append({"role": "assistant", "content": formatted_draft})
-        working_messages.append({"role": "user", "content": review_prompt})
+    working_messages.append(
+        {"role": "assistant", "content": draft_sql_clean}
+    )
+    working_messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"Предыдущий SQL содержит ошибку валидации: {draft_sql_clean}\n\n"
+                + review_prompt
+            ),
+        }
+    )
 
-        reviewed_sql = await query_llm(
-            messages=working_messages,
-            model_name=model_name,
-            temperature=SQL_TEMPERATURE,
-        )
-        print(
-            "[build_sql_query] Stage 2 — сырой ответ ревью:\n"
-            f"{reviewed_sql}"
-        )
-        reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
-        print(f"[build_sql_query] Stage 2 — нормализованный ревью:\n{reviewed_sql_clean}")
+    reviewed_sql = await query_llm(
+        messages=working_messages,
+        model_name=model_name,
+        temperature=SQL_TEMPERATURE,
+    )
+    log.debug("Stage 2 — сырой ответ ревью:\n%s", reviewed_sql)
+    reviewed_sql_clean = normalize_llm_sql_response(reviewed_sql)
+    log.debug("Stage 2 — нормализованный ревью:\n%s", reviewed_sql_clean)
 
-        if reviewed_sql_clean in REFUSAL_RESPONSES:
-            print(f"[build_sql_query] Stage 2 — отказ: {reviewed_sql_clean}")
-            return reviewed_sql_clean
+    if reviewed_sql_clean in REFUSAL_RESPONSES:
+        log.warning("Stage 2 — отказ: %s", reviewed_sql_clean)
+        return reviewed_sql_clean
 
-        reviewed_sql_clean = _validate_or_cannot_answer(reviewed_sql_clean)
-        print(
-            "[build_sql_query] Stage 2 — после _validate_or_cannot_answer:\n"
-            f"{reviewed_sql_clean}"
-        )
-        if reviewed_sql_clean in REFUSAL_RESPONSES:
-            print(
-                "[build_sql_query] Stage 2 — отказ после валидации: "
-                f"{reviewed_sql_clean}"
-            )
-            return reviewed_sql_clean
+    reviewed_sql_clean = _validate_or_cannot_answer(reviewed_sql_clean)
+    log.debug("Stage 2 — после _validate_or_cannot_answer:\n%s", reviewed_sql_clean)
+    if reviewed_sql_clean in REFUSAL_RESPONSES:
+        log.warning("Stage 2 — отказ после валидации: %s", reviewed_sql_clean)
+        return reviewed_sql_clean
 
-        final_sql = _sqlglot_transpile(reviewed_sql_clean)
-        print(f"[build_sql_query] Stage 2 — итоговый SQL:\n{final_sql}")
-        return final_sql
+    final_sql = _sqlglot_transpile(reviewed_sql_clean)
+    log.info("Stage 2 — итоговый SQL:\n%s", final_sql)
+    return final_sql
 
 
 async def main(
@@ -294,12 +294,10 @@ async def main(
             - status (str): "ok" | "cannot_answer" | "error".
     """
 
-    # Генерация SQL (draft + review)
-    print(f"[sql_validator] Начало, messages count: {len(messages)}")
+    log.info("Начало, messages count: %d", len(messages))
     sql = await build_sql_query(messages, REVIEW_PROMPT, model_name)
-    print(f"[sql_validator] build_sql_query вернул:\n{sql}")
+    log.debug("build_sql_query вернул:\n%s", sql)
 
-    # Отказ, инъекция или ошибка валидации
     if sql == CANNOT_ANSWER:
         return {
             "sql": None,
