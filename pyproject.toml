@@ -24,6 +24,7 @@ dependencies = [
     "sqlalchemy[asyncio]",
     "sqlglot>=30.2.1",
     "pytest-repeat>=0.9.4",
+    "nbdime>=4.0.4",
 ]
 requires-python = ">=3.10.0"
 
