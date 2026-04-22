@@ -1,0 +1,102 @@
+[
+    {
+        "id": "query_1",
+        "question": "Покажи все объекты в Петербурге, по работам связанным с покраской, отоплением, вентиляцией и водоснабжением. \nРезультат должен включать город, название объекта, имя подрядчика, название работы, ед.изм, плановый и фактический объем работ.",
+        "golden_sql": "SELECT DISTINCT\n  city, object_name, contractor_name, work_type, unit,\n  ROUND(progress_plan_vol, 2) AS plan_vol,\n  ROUND(progress_fact_vol, 2) AS fact_vol\nFROM v_construction_data\nWHERE city = 'Санкт-Петербург'\n  AND work_type IN ('Окраска', 'Отопление', 'Вентиляция', 'Водоснабжение')\nORDER BY city ASC, object_name ASC, contractor_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_2",
+        "question": "Найди все работы, где фактическое выполнение работ больше 90%.\nВыведи столбец с выполнением в процентах назови его прогресс выполнения.\nРезультат должен включать город, название объекта, тип работы, единицу измерения, плановый и фактический объемы, прогресс выполнения.",
+        "golden_sql": "SELECT\n  city, object_name, work_type, unit,\n  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,\n  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,\n  ROUND(SUM(progress_fact_vol) * 100.0 / SUM(progress_plan_vol), 2) AS sum_прогресс_выполнения\nFROM v_construction_data\nGROUP BY city, object_name, work_type, unit\nHAVING SUM(progress_fact_vol) > 0.9 * SUM(progress_plan_vol)\nORDER BY city ASC, object_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_3",
+        "question": "Каков общий плановый объем работ по каждому подрядчику?\nРезультат должен содержать имя подрядчика, название работы, ед.изм. и сумму всех плановых объемов его работ.",
+        "golden_sql": "SELECT\n  contractor_name, work_type, unit,\n  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol\nFROM v_construction_data\nWHERE contractor_name IS NOT NULL\nGROUP BY contractor_name, work_type, unit\nORDER BY contractor_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_4",
+        "question": "Покажи все индивидуальные строки (БЕЗ агрегации) по работам типа 'Кровельные работы' для всех объектов в Екатеринбурге.\nРезультат должен содержать: город, название объекта, подрядчика, название работы, единицу измерения, плановый объем и фактический объем каждой работы.\nНЕ агрегируй, показывай каждую работу отдельной строкой.",
+        "golden_sql": "SELECT\n  city, object_name, contractor_name, work_type, unit,\n  ROUND(progress_plan_vol, 2) AS plan_vol,\n  ROUND(progress_fact_vol, 2) AS fact_vol\nFROM v_construction_data\nWHERE work_type = 'Кровельные работы'\n  AND city = 'Екатеринбург'\nORDER BY city ASC, object_name ASC, contractor_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_5",
+        "question": "На каких объектах работает Разноработа?",
+        "golden_sql": "SELECT DISTINCT city, object_name\nFROM v_construction_data\nWHERE contractor_name = 'ООО РазноРабота'\nORDER BY city ASC, object_name ASC"
+    },
+    {
+        "id": "query_6",
+        "question": "Какой общий бюджет всех объектов в Воронеже?",
+        "golden_sql": "SELECT city, ROUND(SUM(object_budget), 2) AS sum_budget\nFROM v_construction_data\nWHERE city = 'Воронеж'"
+    },
+    {
+        "id": "query_7",
+        "question": "Сколько объектов в каждом городе?",
+        "golden_sql": "SELECT city, COUNT(DISTINCT object_id) AS count_objects\nFROM v_construction_data\nGROUP BY city\nORDER BY city ASC"
+    },
+    {
+        "id": "query_8",
+        "question": "Каков средний бюджет объекта в Казани?",
+        "golden_sql": "SELECT city, ROUND(AVG(object_budget), 2) AS avg_budget\nFROM v_construction_data\nWHERE city = 'Казань'"
+    },
+    {
+        "id": "query_9",
+        "question": "Покажи процент выполнения по каждому типу работ для Школа № 9 и города где он находится.",
+        "golden_sql": "SELECT\n  city, object_name, work_type, unit,\n  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,\n  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,\n  ROUND(SUM(progress_fact_vol) * 100.0 / SUM(progress_plan_vol), 2) AS sum_прогресс_выполнения\nFROM v_construction_data\nWHERE object_name = 'Школа № 9'\nGROUP BY city, object_name, work_type, unit\nORDER BY city ASC, object_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_10",
+        "question": "Какой объект и город где он находится, имеет самый большой бюджет?",
+        "golden_sql": "SELECT DISTINCT city, object_name, ROUND(object_budget, 2) AS budget\nFROM v_construction_data\nWHERE object_budget = (SELECT MAX(object_budget) FROM v_construction_data)\nORDER BY city ASC, object_name ASC"
+    },
+    {
+        "id": "query_11",
+        "question": "Покажи объекты, бюджет которых выше среднего по всем объектам.",
+        "golden_sql": "SELECT DISTINCT city, object_name, ROUND(object_budget, 2) AS budget\nFROM v_construction_data\nWHERE object_budget > (SELECT AVG(object_budget) FROM v_construction_data)\nORDER BY city ASC, object_name ASC"
+    },
+    {
+        "id": "query_12",
+        "question": "В каком городе больше всего объектов? Выведи город и количество объектов.",
+        "golden_sql": "SELECT city, COUNT(DISTINCT object_id) AS count_objects\nFROM v_construction_data\nGROUP BY city\nORDER BY count_objects DESC LIMIT 1"
+    },
+    {
+        "id": "query_13",
+        "question": "Покажи работы, с городами и объектами, где фактическое выполнение меньше 50% от планового.",
+        "golden_sql": "SELECT\n  city, object_name, work_type, unit,\n  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,\n  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,\n  ROUND(SUM(progress_fact_vol) * 100.0 / SUM(progress_plan_vol), 2) AS sum_процент_выполнения\nFROM v_construction_data\nGROUP BY city, object_name, work_type, unit\nHAVING SUM(progress_fact_vol) < 0.5 * SUM(progress_plan_vol)\nORDER BY city ASC, object_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_14",
+        "question": "Покажи все работы, с городами и объектами, за январь 2024 года.",
+        "golden_sql": "SELECT\n  city, object_name, work_type, unit,\n  ROUND(progress_plan_vol, 2) AS plan_vol,\n  ROUND(progress_fact_vol, 2) AS fact_vol\nFROM v_construction_data\nWHERE progress_date >= '2024-01-01' AND progress_date < '2024-02-01'\nORDER BY city ASC, object_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_15",
+        "question": "Покажи все объекты в Москве и Казани с их бюджетом.",
+        "golden_sql": "SELECT DISTINCT city, object_name, ROUND(object_budget, 2) AS budget\nFROM v_construction_data\nWHERE city IN ('Москва', 'Казань')\nORDER BY city ASC, object_name ASC"
+    },
+    {
+        "id": "query_16",
+        "question": "На каких объектах работают ПАО МегаСтрой и ООО Новый Век?",
+        "golden_sql": "SELECT DISTINCT city, object_name\nFROM v_construction_data\nWHERE contractor_name IN ('ПАО МегаСтрой', 'ООО Новый Век')\nORDER BY city ASC, object_name ASC"
+    },
+    {
+        "id": "query_17",
+        "question": "Покажи разницу между плановым и фактическим объемом по всем типам работ для объекта Офисный центр Альфа 10 и город в котором расположен объект.",
+        "golden_sql": "SELECT\n  city, object_name, work_type, unit,\n  ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol,\n  ROUND(SUM(progress_fact_vol), 2) AS sum_fact_vol,\n  ROUND(SUM(progress_plan_vol) - SUM(progress_fact_vol), 2) AS sum_разница\nFROM v_construction_data\nWHERE object_name = 'Офисный центр Альфа 10'\nGROUP BY city, object_name, work_type, unit\nORDER BY city ASC, object_name ASC, work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_18",
+        "question": "Какие работы выполняет ЗАО Качественно на объекте Больница 18?",
+        "golden_sql": "SELECT DISTINCT work_type, unit\nFROM v_construction_data\nWHERE contractor_name = 'ЗАО Качественно' AND object_name = 'Больница 18'\nORDER BY work_type ASC, unit ASC"
+    },
+    {
+        "id": "query_19",
+        "question": "Какой объект имеет самый маленький бюджет?",
+        "golden_sql": "SELECT DISTINCT city, object_name, ROUND(object_budget, 2) AS budget\nFROM v_construction_data\nWHERE object_budget = (SELECT MIN(object_budget) FROM v_construction_data)\nORDER BY city ASC, object_name ASC"
+    },
+    {
+        "id": "query_20",
+        "question": "Сколько подрядчиков работает на каждом объекте?",
+        "golden_sql": "SELECT\n  city, object_name, COUNT(DISTINCT contractor_name) AS count_contractors\nFROM v_construction_data\nWHERE contractor_name IS NOT NULL\nGROUP BY city, object_name\nORDER BY city ASC, object_name ASC"
+    }
+]

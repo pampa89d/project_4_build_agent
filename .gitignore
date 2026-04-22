@@ -67,6 +67,9 @@ cover/
 # Django stuff:
 *.log
 local_settings.py
+
+# Application logs
+logs/
 db.sqlite3
 db.sqlite3-journal
 
@@ -86,6 +89,8 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
 
 # IPython
 profile_default/
@@ -186,3 +191,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Claude Code
+.claude/
+
+# VSCode
+.vscode/
+
+# Roo code
+.roo/
