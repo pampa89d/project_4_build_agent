@@ -13,7 +13,8 @@ log = get_logger("sql_flow")
 
 SYSTEM_PROMPT = (
     "Ты BI аналитик, который на основе запроса делает поиск релевантной информации "
-    "и строит отчет саммари. Для поиска информации используй инструменты."
+    "и строит отчет саммари. Для поиска информации используй инструменты. "
+    "Отвечай только на русском языке."
 )
 
 DEFAULT_TOOLS = [
@@ -68,20 +69,14 @@ async def sql_layer(**kwargs) -> str:
         log.info("База данных определена по адресу: %s", db_dir)
         db_files = sorted(db_dir.glob("construction*.db"))
         if not db_files:
-            raise FileNotFoundError(
-                f"Файл базы данных не найден в {db_dir}"
-            )
+            raise FileNotFoundError(f"Файл базы данных не найден в {db_dir}")
         db_path = db_files[0]
         if db_path.is_file():
             async_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
         else:
-            raise FileNotFoundError(
-                f"Файл базы данных не определен: {db_path}"
-            )
+            raise FileNotFoundError(f"Файл базы данных не определен: {db_path}")
     else:
-        raise FileNotFoundError(
-            f"Директория базы данных не определена: {db_dir}"
-        )
+        raise FileNotFoundError(f"Директория базы данных не определена: {db_dir}")
 
     user_query = kwargs["user_question"]
     log.info("Получен вопрос: %s", user_query)
@@ -95,7 +90,8 @@ async def sql_layer(**kwargs) -> str:
         sql_query = await sql_validator(messages)
         log.info(
             "Статус валидации: %s. Причина остановки: %s.",
-            sql_query["status"], sql_query["answer"],
+            sql_query["status"],
+            sql_query["answer"],
         )
         if sql_query["status"] == "ok":
             break
@@ -267,19 +263,26 @@ async def run_sql_flow(
         [
             {
                 "role": "user",
-                "content": "Сформируй краткий ответ на запрос пользователя, на основе полученной ранее информации.",
+                "content": "Сформируй краткий ответ на запрос пользователя, на основе полученной ранее информации."
+                "При формировании краткого ответа учитывай все колонки из базы данных."
+                "Результат должен быть оформлен в виде Markdown таблицы с форматированием по ширине."
+                "Если логически запрос пользователя можно разделить на несколько подзапросов, то результат раздели на несколько таблиц."
+                "После таблиц обязательно должен присутствовать вывод основанный на запросе, с кратким саммари данных из таблиц.",
             }
         ]
     )
 
     final_answer = await query_llm(messages=messages, model_name=DEFAULT_MODEL)
-    log.info("Ответ получен")
+    log.info(
+        f"\n{60 * '='}\nНа запрос:\n{60 * '='}\n{user_query}\n{60 * '='}\nПолучен ответ:\n{60 * '='}\n{final_answer}\n{60 * '='}\n"
+    )
     return final_answer
 
 
 if __name__ == "__main__":
     user_query = (
-        "Мне нужна инофрмация какие работы сейчас выполняет подрядчик "
-        "Техстрой, а также их % готовности."
+        # "Мне нужна инофрмация какие работы сейчас выполняет подрядчик Техстрой, а также их % готовности."
+        # "Дополнительно выведи информацию на каких объектах работает Техстрой."
+        "На каких объектах работают ПАО МегаСтрой и ООО Новый Век?"
     )
     print(asyncio.run(run_sql_flow(user_query)))
