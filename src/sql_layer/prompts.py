@@ -3,21 +3,61 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sql_layer.schema import build_prompt_values, get_schema_from_db
 
 REVIEW_PROMPT = """\
-Ты — SQL-ревьюер. Проверь запрос ниже на соответствие правилам и исправь ошибки.
+Ты — SQL-ревьюер. Запрос ниже уже сгенерирован по схеме БД из системного промпта.
+Твоя задача — проверить SQL на формальные ошибки и вернуть исправленный вариант.
 
-ПРАВИЛА:
-1. Используется ТОЛЬКО VIEW v_construction_data — никаких прямых таблиц.
-2. Все числовые столбцы обёрнуты в ROUND(..., 2), кроме COUNT и progress_completion_pct.
-3. Агрегированные столбцы имеют алиасы (sum_, count_, avg_).
-4. GROUP BY содержит все неагрегированные столбцы из SELECT.
-5. Фильтр по агрегату — HAVING, не WHERE.
-6. Если GROUP BY по объекту — city ОБЯЗАТЕЛЬНО в GROUP BY и SELECT.
-7. ORDER BY содержит только столбцы из SELECT (без алиасов таблиц).
-8. Один SQL-запрос, без markdown, без пояснений.
+ЧТО СЧИТАТЬ ОШИБКОЙ (исправляй):
 
-Если запрос корректен — верни его без изменений.
-Если есть ошибки — верни исправленный SQL.
-Если запрос неисправим — верни: Невозможно ответить
+1. Пропущен ROUND вокруг числового столбца:
+  ❌ SUM(progress_plan_vol) AS sum_plan_vol
+  ✅ ROUND(SUM(progress_plan_vol), 2) AS sum_plan_vol
+
+2. В SELECT есть неагрегированный столбец, но его нет в GROUP BY:
+  ❌ SELECT city, work_type, SUM(vol) ... GROUP BY work_type
+  ✅ SELECT city, work_type, SUM(vol) ... GROUP BY city, work_type
+
+3. GROUP BY по object_name без city:
+  ❌ GROUP BY object_name, work_type
+  ✅ GROUP BY city, object_name, work_type
+
+4. Фильтр по агрегату через WHERE вместо HAVING:
+  ❌ WHERE SUM(fact_vol) > 100
+  ✅ HAVING SUM(fact_vol) > 100
+
+5. ORDER BY ссылается на столбец не из SELECT:
+  ❌ SELECT work_type ... ORDER BY city
+  ✅ SELECT city, work_type ... ORDER BY city, work_type
+
+6. Агрегатные функции (SUM/AVG) без GROUP BY:
+  ❌ SELECT work_type, SUM(vol) FROM ... (без GROUP BY)
+  ✅ SELECT work_type, SUM(vol) FROM ... GROUP BY work_type
+
+7. Агрегат в SELECT, но WHERE city='X' без city в SELECT:
+  ❌ SELECT SUM(object_budget) ... WHERE city = 'Воронеж'
+  ✅ SELECT city, SUM(object_budget) ... WHERE city = 'Воронеж'
+
+8. Алиас агрегата без обязательного префикса:
+  ❌ SUM(progress_plan_vol) AS plan_vol
+  ✅ SUM(progress_plan_vol) AS sum_plan_vol
+
+9. DISTINCT отсутствует при построчном запросе без GROUP BY:
+  ❌ SELECT object_name, contractor_name FROM ... (дубли из-за progress-строк)
+  ✅ SELECT DISTINCT object_name, contractor_name FROM ...
+
+10. max/min метрика без DISTINCT и подзапроса:
+  ❌ SELECT object_name, object_budget ... ORDER BY object_budget DESC LIMIT 1
+  ✅ SELECT DISTINCT city, object_name, ROUND(object_budget, 2) AS budget
+     FROM ... WHERE object_budget = (SELECT MAX(object_budget) FROM ...)
+
+ЧТО НЕ СЧИТАТЬ ОШИБКОЙ (не трогай):
+- Имена алиасов на русском (процент_выполнения, sum_разница)
+- Логика фильтрации (выбор подрядчика, города и т.д.)
+- Порядок столбцов в SELECT
+- Использование v_construction_data (это единственная допустимая VIEW)
+
+Если ошибок нет — верни SQL без изменений.
+Всегда возвращай SQL. Только если запрос содержит DROP/DELETE/INSERT или
+обращение к системным таблицам — верни: Невозможно ответить
 
 SQL для проверки:
 """
