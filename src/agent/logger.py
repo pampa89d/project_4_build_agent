@@ -1,9 +1,10 @@
 import logging
 from logging.handlers import RotatingFileHandler
+import os
 from pathlib import Path
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
-_LOG_FILE = _LOG_DIR / "sql_flow.log"
+_LOG_FILE = _LOG_DIR / "llm_flow.log"
 _MAX_BYTES = 1_000_000
 _BACKUP_COUNT = 3
 _FORMAT = "%(asctime)s [%(name)s] %(levelname)s — %(message)s"
@@ -21,7 +22,7 @@ def _setup() -> None:
 
     formatter = logging.Formatter(_FORMAT, datefmt=_DATE_FORMAT)
 
-    root = logging.getLogger("sql_flow")
+    root = logging.getLogger("llm_flow")
 
     file_handler = RotatingFileHandler(
         _LOG_FILE,
@@ -31,13 +32,14 @@ def _setup() -> None:
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-
     root.addHandler(file_handler)
-    root.addHandler(console_handler)
+
+    if not os.getenv("LOG_QUIET"):
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        root.addHandler(console_handler)
+
     root.setLevel(logging.DEBUG)
 
     _initialized = True
@@ -45,4 +47,4 @@ def _setup() -> None:
 
 def get_logger(name: str) -> logging.Logger:
     _setup()
-    return logging.getLogger(f"sql_flow.{name}")
+    return logging.getLogger(f"llm_flow.{name}")
