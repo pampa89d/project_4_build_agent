@@ -30,7 +30,10 @@ DEFAULT_TOOLS = [
                 "properties": {
                     "user_question": {
                         "type": "string",
-                        "description": ("Вопрос пользователя на естественном языке."),
+                        "description": (
+                            "Вопрос пользователя на естественном языке."
+                            "Должен в точности соответсвовать user_query из messages."
+                        ),
                     },
                     "model_name": {
                         "type": "string",
@@ -91,12 +94,32 @@ async def sql_layer(**kwargs) -> str:
 
     for i in range(3):
         print(f"[sql_layer] Попытка валидации SQL #{i + 1}/3")
+        print(f"[sql_layer] Валидация сообщения: {messages[-1]}")
         sql_query = await sql_validator(messages)
         print(
-            f"[sql_layer] Статус валидации: {sql_query['status']}.\nПричина остановки: {sql_query['answer']}."
+            f"[sql_layer] Статус валидации: {sql_query['status']}.\n",
+            f"Причина остановки: {sql_query['answer']}.",
         )
         if sql_query["status"] == "ok":
             break
+        # Добавляем результат неудачной попытки в messages, чтобы LLM
+        # мог учесть ошибку и исправить SQL на следующей итерации
+        messages.append(
+            {
+                "role": "assistant",
+                "content": sql_query.get("sql") or sql_query["answer"],
+            }
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"Предыдущий SQL-запрос вернул статус «{sql_query['status']}» "
+                    f"с причиной: {sql_query['answer']}. "
+                    "Пожалуйста, исправь запрос или переформулируй его."
+                ),
+            }
+        )
         if i == 2:
             msg = (
                 "Запрос не прошел валидацию и вернул следующее,\n"
@@ -148,7 +171,9 @@ async def execute_tool_calls(
             func_id = tool.id
             func_arguments = json.loads(tool.function.arguments)
             func_name = tool.function.name
-            print(f"[execute_tool_calls] #{idx}: {func_name}({func_arguments})")
+            print(
+                f"[execute_tool_calls] Функция из tool: #{idx}: {func_name}({func_arguments})"
+            )
             if func_name not in tool_mapping:
                 print(f"[execute_tool_calls] #{idx}: {func_name} — неизвестная функция")
                 tool_messages.append(
@@ -178,6 +203,9 @@ async def execute_tool_calls(
             )
 
             try:
+                print(
+                    f"[execute_tool_calls] Начало выполнения функции: #{idx}: {func_name}"
+                )
                 func_result = await tool_mapping[func_name](**func_arguments)
                 print(f"[execute_tool_calls] #{idx}: {func_name} выполнена успешно")
 
@@ -248,7 +276,7 @@ async def run_sql_flow(
 
     for i in range(max_iterations):
         print(f"[run_sql_flow] Итерация #{i + 1}/{max_iterations} — запрос к LLM...")
-        result = await raw_query_llm(messages, model_name, tools=tools)
+        result = await raw_query_llm(messages, model_name, tools)
         tool_calls = result.choices[0].message.tool_calls
         if tool_calls:
             print(f"[run_sql_flow] LLM вернул {len(tool_calls)} tool_call(s)")
@@ -272,6 +300,6 @@ async def run_sql_flow(
     return final_answer
 
 
-user_query = "Мне нужна инофрмация какие работы сейчас выполняет подрядчик Строймонтаж, а также их % готовности."
+user_query = "Мне нужна инофрмация какие работы сейчас выполняет подрядчик Техстрой, а также их % готовности."
 
 print(asyncio.run(run_sql_flow(user_query)))

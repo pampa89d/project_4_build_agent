@@ -35,14 +35,19 @@ async def query_llm(
     if not tools:
         tools = []
 
+    print(
+        f"[query_llm] model={model_name}, "
+        f"messages={len(messages)}, tools={len(tools)}"
+    )
     completion = await async_client.chat.completions.create(
         model=model_name,
         messages=messages,
         tools=tools,
         temperature=temperature,
     )
-
-    return completion.choices[0].message.content
+    content = completion.choices[0].message.content
+    print(f"[query_llm] ответ: {content!r}")
+    return content
 
 
 async def raw_query_llm(
@@ -64,6 +69,10 @@ async def raw_query_llm(
     if not tools:
         tools = []
 
+    print(
+        f"[raw_query_llm] model={model_name}, "
+        f"messages={len(messages)}, tools={len(tools)}"
+    )
     completion = await async_client.chat.completions.create(
         model=model_name,
         messages=messages,
@@ -75,5 +84,9 @@ async def raw_query_llm(
         },
         temperature=temperature,
     )
-
+    msg = completion.choices[0].message
+    print(
+        f"[raw_query_llm] content={msg.content!r}, "
+        f"tool_calls={len(msg.tool_calls) if msg.tool_calls else 0}"
+    )
     return completion
